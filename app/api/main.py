@@ -302,6 +302,28 @@ def _register_default_tools():
         except Exception as exc:
             logger.warning("Failed to register Scrapling tool: %s", exc)
 
+    # Register Crawl4AI tool (LLM-optimized markdown output)
+    if "crawl4ai" not in registry:
+        from app.tools.web.crawl4ai import Crawl4AIToolFactory
+
+        try:
+            crawl4ai_tool = Crawl4AIToolFactory.from_settings(resolved_settings)
+            registry.register(crawl4ai_tool)
+            logger.info("Registered Crawl4AI tool (filter: %s)", resolved_settings.crawl4ai_filter)
+        except Exception as exc:
+            logger.warning("Failed to register Crawl4AI tool: %s", exc)
+
+    # Register Content Extractor (unified tool with smart fallback)
+    if "content_extractor" not in registry:
+        from app.tools.web.extractor import ContentExtractorFactory
+
+        try:
+            extractor_tool = ContentExtractorFactory.from_settings(resolved_settings)
+            registry.register(extractor_tool)
+            logger.info("Registered Content Extractor (strategy: %s)", resolved_settings.content_extractor_strategy)
+        except Exception as exc:
+            logger.warning("Failed to register Content Extractor: %s", exc)
+
 
 # FastAPI Application Factory
 

@@ -62,6 +62,14 @@ class Settings:
     scrapling_fetcher: str = "basic"
     scrapling_timeout: int = 30
     scrapling_max_content_length: int = 50000
+    crawl4ai_filter: str = "pruning"
+    crawl4ai_threshold: float = 0.48
+    crawl4ai_timeout: int = 30
+    crawl4ai_max_content_length: int = 50000
+    crawl4ai_headless: bool = True
+    content_extractor_strategy: str = "markdown"
+    content_extractor_timeout: int = 60
+    content_extractor_max_length: int = 50000
 
     schedule_times: list[str] = field(default_factory=lambda: ["08:00", "18:00"])
     timezone: str = "Europe/Paris"
@@ -111,6 +119,14 @@ class Settings:
             scrapling_fetcher=os.getenv("SCRAPLING_FETCHER", "basic"),
             scrapling_timeout=int(os.getenv("SCRAPLING_TIMEOUT", "30")),
             scrapling_max_content_length=int(os.getenv("SCRAPLING_MAX_CONTENT_LENGTH", "50000")),
+            crawl4ai_filter=os.getenv("CRAWL4AI_FILTER", "pruning"),
+            crawl4ai_threshold=float(os.getenv("CRAWL4AI_THRESHOLD", "0.48")),
+            crawl4ai_timeout=int(os.getenv("CRAWL4AI_TIMEOUT", "30")),
+            crawl4ai_max_content_length=int(os.getenv("CRAWL4AI_MAX_CONTENT_LENGTH", "50000")),
+            crawl4ai_headless=os.getenv("CRAWL4AI_HEADLESS", "true").lower() == "true",
+            content_extractor_strategy=os.getenv("CONTENT_EXTRACTOR_STRATEGY", "markdown"),
+            content_extractor_timeout=int(os.getenv("CONTENT_EXTRACTOR_TIMEOUT", "60")),
+            content_extractor_max_length=int(os.getenv("CONTENT_EXTRACTOR_MAX_LENGTH", "50000")),
             schedule_times=_parse_csv(os.getenv("SCHEDULE_TIMES", "08:00,18:00")),
             timezone=os.getenv("TIMEZONE", "Europe/Paris"),
         )

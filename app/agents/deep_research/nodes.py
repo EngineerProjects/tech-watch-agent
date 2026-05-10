@@ -78,6 +78,7 @@ class DeepResearchNodes:
         self._llm_client = None
         self._tavily_tool = tavily_tool
         self._think_tool = None
+        self._content_extractor = None
 
     @property
     def llm_client(self):
@@ -100,6 +101,28 @@ class DeepResearchNodes:
             from app.tools.web.think import ThinkTool
             self._think_tool = ThinkTool()
         return self._think_tool
+
+    def _get_content_extractor(self) -> Any:
+        """Lazy load ContentExtractorTool."""
+        if self._content_extractor is None:
+            from app.tools.web.extractor import ContentExtractorFactory
+            self._content_extractor = ContentExtractorFactory.from_settings()
+        return self._content_extractor
+
+    async def _extract_content(self, url: str) -> Optional[str]:
+        """Extract clean content from a URL using content_extractor with fallback."""
+        try:
+            extractor = self._get_content_extractor()
+            result = await extractor.execute({
+                "url": url,
+                "strategy": "markdown",
+                "output_format": "markdown",
+            })
+            if result.get("success"):
+                return result.get("data", {}).get("content", "")
+        except Exception as exc:
+            logger.warning("Content extraction failed for %s: %s", url, exc)
+        return None
 
     def _generate_completion(
         self,
@@ -502,6 +525,22 @@ Keep search queries focused and specific for best results.""",
                     "answer": answer,
                     "sources": [{"title": r.get("title"), "url": r.get("url")} for r in results_list[:5]],
                 })
+
+                # Extract detailed content from top URLs using content_extractor
+                for source in results_list[:2]:
+                    url = source.get("url", "")
+                    if url:
+                        content_result = await self._extract_content(url)
+                        if content_result:
+                            researcher_state["raw_notes"].append({
+                                "type": "extracted_content",
+                                "url": url,
+                                "title": source.get("title", ""),
+                                "content": content_result,
+                            })
+                            researcher_state["researcher_messages"].append(
+                                AIMessage(content=f"[Content from {url}]\n{content_result[:2000]}...")
+                            )
 
                 researcher_state["researcher_messages"].append(
                     AIMessage(content=f"[Search Results]\n{search_summary}")
