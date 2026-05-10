@@ -59,6 +59,9 @@ class Settings:
     gmail_token_path: str = "token.json"
 
     tavily_api_key: str = ""
+    scrapling_fetcher: str = "basic"
+    scrapling_timeout: int = 30
+    scrapling_max_content_length: int = 50000
 
     schedule_times: list[str] = field(default_factory=lambda: ["08:00", "18:00"])
     timezone: str = "Europe/Paris"
@@ -105,6 +108,9 @@ class Settings:
             gmail_credentials_path=os.getenv("GMAIL_CREDENTIALS_PATH", "credentials.json"),
             gmail_token_path=os.getenv("GMAIL_TOKEN_PATH", "token.json"),
             tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
+            scrapling_fetcher=os.getenv("SCRAPLING_FETCHER", "basic"),
+            scrapling_timeout=int(os.getenv("SCRAPLING_TIMEOUT", "30")),
+            scrapling_max_content_length=int(os.getenv("SCRAPLING_MAX_CONTENT_LENGTH", "50000")),
             schedule_times=_parse_csv(os.getenv("SCHEDULE_TIMES", "08:00,18:00")),
             timezone=os.getenv("TIMEZONE", "Europe/Paris"),
         )

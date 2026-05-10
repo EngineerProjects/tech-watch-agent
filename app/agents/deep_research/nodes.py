@@ -77,6 +77,7 @@ class DeepResearchNodes:
         self.config = config or DeepResearchConfig()
         self._llm_client = None
         self._tavily_tool = tavily_tool
+        self._think_tool = None
 
     @property
     def llm_client(self):
@@ -92,6 +93,13 @@ class DeepResearchNodes:
             from app.tools.web.tavily import TavilySearchToolFactory
             self._tavily_tool = TavilySearchToolFactory.from_settings()
         return self._tavily_tool
+
+    def _get_think_tool(self) -> Any:
+        """Lazy load ThinkTool."""
+        if self._think_tool is None:
+            from app.tools.web.think import ThinkTool
+            self._think_tool = ThinkTool()
+        return self._think_tool
 
     def _generate_completion(
         self,
@@ -503,6 +511,30 @@ Keep search queries focused and specific for best results.""",
                 researcher_state["researcher_messages"].append(
                     AIMessage(content=f"[Search Error] {search_result.get('error', 'Unknown error')}")
                 )
+
+            # Use think_tool to reflect on progress and decide next action
+            think_tool = self._get_think_tool()
+            messages_text = get_buffer_string(researcher_state["researcher_messages"])
+            think_result = await think_tool.execute({
+                "input": f"Research topic: {research_topic}\n\nMy current research:\n{messages_text}\n\nI've done {researcher_state['tool_call_iterations']} search(es). Should I search more or stop?",
+                "depth": "standard",
+            })
+
+            if think_result.get("success") and think_result.get("data"):
+                reflection = think_result["data"]
+                confidence = reflection.get("confidence", "medium")
+                recommended = reflection.get("recommended_action", "")
+
+                researcher_state["researcher_messages"].append(
+                    AIMessage(content=f"[Think Reflection] Confidence: {confidence}. {recommended}")
+                )
+
+                # Stop if confidence is high or recommended action says to stop
+                if confidence == "high" or "stop" in recommended.lower()[:50]:
+                    break
+            elif iteration == min(5, self.config.max_react_tool_calls) - 1:
+                # Force stop at max iterations
+                break
 
         # Compress research results
         compressed = self._compress_research(researcher_state)

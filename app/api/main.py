@@ -291,6 +291,17 @@ def _register_default_tools():
         except Exception:
             pass
 
+    # Register Scrapling tool (adaptive web scraping with anti-bot bypass)
+    if "scrapling" not in registry:
+        from app.tools.web.scrapling import ScraplingToolFactory
+
+        try:
+            scrapling_tool = ScraplingToolFactory.from_settings(resolved_settings)
+            registry.register(scrapling_tool)
+            logger.info("Registered Scrapling tool (fetcher: %s)", resolved_settings.scrapling_fetcher)
+        except Exception as exc:
+            logger.warning("Failed to register Scrapling tool: %s", exc)
+
 
 # FastAPI Application Factory
 
