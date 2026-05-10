@@ -51,6 +51,9 @@ class DeepResearchConfig(AgentConfig):
 
     # Tool configuration
     mcp_prompt: Optional[str] = None
+    tavily_api_key: Optional[str] = None
+    use_tavily: bool = True
+    use_mcp: bool = False
 
     # Custom settings
     research_depth: str = "medium"  # "shallow", "medium", "deep"

@@ -277,6 +277,20 @@ def _register_default_tools():
 
         registry.register(RegisteredSearchTool())
 
+    # Register Tavily search tool if API key is configured
+    if "tavily_search" not in registry:
+        from app.tools.web.tavily import TavilySearchTool
+
+        try:
+            tavily_tool = TavilySearchTool()
+            if tavily_tool._api_key:
+                registry.register(tavily_tool)
+                logger.info("Registered Tavily search tool")
+            else:
+                logger.info("Tavily API key not set, skipping Tavily tool registration")
+        except Exception:
+            pass
+
 
 # FastAPI Application Factory
 

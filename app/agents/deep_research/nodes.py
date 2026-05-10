@@ -66,14 +66,17 @@ class DeepResearchNodes:
     def __init__(
         self,
         config: Optional[DeepResearchConfig] = None,
+        tavily_tool: Optional[Any] = None,
     ) -> None:
         """Initialize the nodes.
 
         Args:
             config: Optional configuration
+            tavily_tool: Optional TavilySearchTool instance for web research
         """
         self.config = config or DeepResearchConfig()
         self._llm_client = None
+        self._tavily_tool = tavily_tool
 
     @property
     def llm_client(self):
@@ -82,6 +85,13 @@ class DeepResearchNodes:
             from app.services.llm import ChatCompletionClient
             self._llm_client = ChatCompletionClient()
         return self._llm_client
+
+    def _get_tavily_tool(self) -> Any:
+        """Lazy load Tavily search tool."""
+        if self._tavily_tool is None:
+            from app.tools.web.tavily import TavilySearchToolFactory
+            self._tavily_tool = TavilySearchToolFactory.from_settings()
+        return self._tavily_tool
 
     def _generate_completion(
         self,
@@ -435,32 +445,64 @@ Be decisive and efficient. Don't over-research.
             "raw_notes": [],
         }
 
-        # Run researcher loop
+        # Run researcher loop with real Tavily search
         for iteration in range(min(5, self.config.max_react_tool_calls)):
-            # Generate next action
             messages_text = get_buffer_string(researcher_state["researcher_messages"])
-            prompt = f"""Research topic: {research_topic}
 
-Current progress:
+            # LLM decides what to search next
+            response = self._generate_completion(
+                prompt=f"""Research topic: {research_topic}
+
+Current conversation:
 {messages_text}
 
-What should I search for next? Provide a specific search query or indicate research is complete."""
+Based on the research topic and current conversation, decide what to search for next.
+If you need more information, provide a specific search query.
+If you have enough information, say "RESEARCH_COMPLETE".
 
-            response = self._generate_completion(
-                prompt=prompt,
-                system_message=RESEARCH_SYSTEM_PROMPT.format(
-                    date=get_today_str(),
-                    mcp_prompt=self.config.mcp_prompt or "",
-                ),
-                temperature=0.4,
-                max_tokens=2000,
+Return exactly one of:
+- A search query (1-2 sentences, specific)
+- "RESEARCH_COMPLETE" if you have enough information
+
+Keep search queries focused and specific for best results.""",
+                system_message="You are a research assistant. Generate specific search queries.",
+                temperature=0.3,
+                max_tokens=500,
             )
 
-            researcher_state["researcher_messages"].append(AIMessage(content=response))
-
-            # Check if research should end
-            if "complete" in response.lower() or len(response) < 100:
+            if "RESEARCH_COMPLETE" in response.strip().upper()[:20]:
                 break
+
+            # Execute the actual search
+            tavily = self._get_tavily_tool()
+            search_result = await tavily.execute({"query": response.strip()})
+
+            if search_result.get("success"):
+                data = search_result.get("data", {})
+                results_list = data.get("results", [])
+                answer = data.get("answer", "")
+
+                search_summary = f"Search: {response.strip()}\n\n"
+                if answer:
+                    search_summary += f"Tavily Answer: {answer}\n\n"
+                if results_list:
+                    for r in results_list[:3]:
+                        search_summary += f"- [{r.get('title', '')}]({r.get('url', '')}): {r.get('content', '')[:200]}...\n"
+
+                researcher_state["raw_notes"].append({
+                    "query": response.strip(),
+                    "answer": answer,
+                    "sources": [{"title": r.get("title"), "url": r.get("url")} for r in results_list[:5]],
+                })
+
+                researcher_state["researcher_messages"].append(
+                    AIMessage(content=f"[Search Results]\n{search_summary}")
+                )
+                researcher_state["tool_call_iterations"] += 1
+            else:
+                researcher_state["researcher_messages"].append(
+                    AIMessage(content=f"[Search Error] {search_result.get('error', 'Unknown error')}")
+                )
 
         # Compress research results
         compressed = self._compress_research(researcher_state)
