@@ -50,6 +50,7 @@ class OrchestratorAgent(BaseAgent):
         settings: Optional[Settings] = None,
         workflow: Optional[OrchestratorWorkflow] = None,
         nodes: Optional[OrchestratorNodes] = None,
+        checkpointer=None,
     ) -> None:
         if config is None:
             config = OrchestratorConfig()
@@ -58,6 +59,7 @@ class OrchestratorAgent(BaseAgent):
 
         self._workflow = workflow
         self._nodes = nodes
+        self._checkpointer = checkpointer
 
     @property
     def config(self) -> OrchestratorConfig:
@@ -79,7 +81,10 @@ class OrchestratorAgent(BaseAgent):
             self._nodes = OrchestratorNodes(max_articles=5, min_sources=2)
 
         if self._workflow is None:
-            self._workflow = create_orchestrator_workflow(nodes=self._nodes)
+            self._workflow = create_orchestrator_workflow(
+                nodes=self._nodes,
+                checkpointer=self._checkpointer,
+            )
 
         logger.info("Orchestrator agent setup complete")
 
@@ -178,6 +183,7 @@ class OrchestratorAgent(BaseAgent):
 def create_orchestrator_agent(
     config: Optional[OrchestratorConfig] = None,
     settings: Optional[Settings] = None,
+    checkpointer=None,
 ) -> OrchestratorAgent:
     """Factory function to create an orchestrator agent."""
-    return OrchestratorAgent(config=config, settings=settings)
+    return OrchestratorAgent(config=config, settings=settings, checkpointer=checkpointer)

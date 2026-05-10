@@ -42,7 +42,7 @@ from app.db.models import User, UserTopic, Article, NewsletterRun
 from app.agents.newsletter.agent import create_newsletter_agent, NewsletterAgent
 from app.agents.deep_research.agent import create_deep_research_agent, DeepResearchAgent
 from app.agents.deep_research.config import DeepResearchConfig
-from app.memory.memory_manager import MemoryManager
+from app.rag.memory_manager import MemoryManager
 from app.tools.registry import get_global_registry, ToolRegistry
 from app.tools.base import BaseTool, ToolCategory
 from app.services.llm.providers import (

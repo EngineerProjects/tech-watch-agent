@@ -56,7 +56,7 @@ class DeepResearchGraphBuilder:
         self.config = config or DeepResearchConfig()
         self.nodes = nodes or DeepResearchNodes(config=self.config)
 
-    def build(self) -> CompiledStateGraph:
+    def build(self, checkpointer=None) -> CompiledStateGraph:
         """Build and compile the complete workflow graph.
 
         Returns:
@@ -80,7 +80,7 @@ class DeepResearchGraphBuilder:
         main_graph.add_edge("research_supervisor", "final_report_generation")
         main_graph.add_edge("final_report_generation", END)
 
-        return main_graph.compile()
+        return main_graph.compile(checkpointer=checkpointer)
 
     def _build_supervisor_subgraph(self) -> CompiledStateGraph:
         """Build the supervisor subgraph.
@@ -135,6 +135,7 @@ class DeepResearchWorkflow:
         self,
         config: Optional[DeepResearchConfig] = None,
         nodes: Optional[DeepResearchNodes] = None,
+        checkpointer=None,
     ) -> None:
         """Initialize the workflow.
 
@@ -144,9 +145,9 @@ class DeepResearchWorkflow:
         """
         self.config = config or DeepResearchConfig()
         self.nodes = nodes or DeepResearchNodes(config=self.config)
-        self.graph = self._build_graph()
+        self.graph = self._build_graph(checkpointer=checkpointer)
 
-    def _build_graph(self) -> CompiledStateGraph:
+    def _build_graph(self, checkpointer=None) -> CompiledStateGraph:
         """Build the workflow graph.
 
         Returns:
@@ -156,7 +157,7 @@ class DeepResearchWorkflow:
             config=self.config,
             nodes=self.nodes,
         )
-        return builder.build()
+        return builder.build(checkpointer=checkpointer)
 
     def run(
         self,
@@ -243,6 +244,7 @@ class DeepResearchWorkflow:
 # Factory function for creating the workflow
 def create_deep_research_workflow(
     config: Optional[DeepResearchConfig] = None,
+    checkpointer=None,
 ) -> DeepResearchWorkflow:
     """Create a configured deep research workflow.
 
@@ -252,4 +254,4 @@ def create_deep_research_workflow(
     Returns:
         DeepResearchWorkflow instance
     """
-    return DeepResearchWorkflow(config=config)
+    return DeepResearchWorkflow(config=config, checkpointer=checkpointer)

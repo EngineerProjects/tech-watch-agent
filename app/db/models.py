@@ -27,6 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from app.db.base import Base
 
@@ -123,7 +124,7 @@ class Article(Base):
     topic: Mapped[str] = mapped_column(String(255), index=True)
     published_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     relevance_score: Mapped[int] = mapped_column(Integer, default=0)
-    embedding_vector: Mapped[Optional[list[float]]] = mapped_column(JSONB, nullable=True)
+    embedding_vector: Mapped[Optional[list[float]]] = mapped_column(Vector(1536), nullable=True)
     meta_data: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -12,10 +12,10 @@ Components:
 - MemoryManager: Coordinates all memory components
 """
 
-from app.memory.vector_store import VectorStore, EmbeddingConfig
-from app.memory.article_store import ArticleStore
-from app.memory.session import SessionManager, Session
-from app.memory.memory_manager import MemoryManager
+from app.rag.vector_store import VectorStore, EmbeddingConfig
+from app.rag.article_store import ArticleStore
+from app.rag.session import SessionManager, Session
+from app.rag.memory_manager import MemoryManager
 
 __all__ = [
     "VectorStore",

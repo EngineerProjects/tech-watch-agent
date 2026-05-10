@@ -16,9 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.core.models import Article
-from app.memory.vector_store import VectorStore, EmbeddingConfig, SearchResult
-from app.memory.article_store import ArticleStore, ArticleFilter
-from app.memory.session import SessionManager, Session
+from app.rag.vector_store import VectorStore, EmbeddingConfig, SearchResult
+from app.rag.article_store import ArticleStore, ArticleFilter
+from app.rag.session import SessionManager, Session
 
 
 logger = get_logger(__name__)

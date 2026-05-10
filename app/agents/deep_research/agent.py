@@ -52,6 +52,7 @@ class DeepResearchAgent(BaseAgent):
         settings: Optional[Settings] = None,
         workflow: Optional[DeepResearchWorkflow] = None,
         nodes: Optional[DeepResearchNodes] = None,
+        checkpointer=None,
     ) -> None:
         """Initialize the deep research agent.
 
@@ -69,6 +70,7 @@ class DeepResearchAgent(BaseAgent):
 
         self._workflow = workflow
         self._nodes = nodes
+        self._checkpointer = checkpointer
 
     async def setup(self) -> None:
         """Set up agent resources.
@@ -81,11 +83,11 @@ class DeepResearchAgent(BaseAgent):
         if self._nodes is None:
             self._nodes = DeepResearchNodes(config=self.config)
 
-        # Create workflow if not provided
         if self._workflow is None:
             self._workflow = DeepResearchWorkflow(
                 config=self.config,
                 nodes=self._nodes,
+                checkpointer=self._checkpointer,
             )
 
         logger.info("Deep research agent setup complete")
@@ -233,6 +235,7 @@ class DeepResearchAgent(BaseAgent):
 def create_deep_research_agent(
     config: Optional[DeepResearchConfig] = None,
     settings: Optional[Settings] = None,
+    checkpointer=None,
 ) -> DeepResearchAgent:
     """Factory function to create a configured deep research agent.
 
@@ -252,4 +255,4 @@ def create_deep_research_agent(
             research_model=settings.llm_model,
         )
 
-    return DeepResearchAgent(config=config, settings=settings)
+    return DeepResearchAgent(config=config, settings=settings, checkpointer=checkpointer)

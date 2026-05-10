@@ -287,7 +287,7 @@ async def check_memory_health() -> ComponentHealth:
     start_time = time.time()
 
     try:
-        from app.memory.memory_manager import MemoryManager
+        from app.rag.memory_manager import MemoryManager
 
         async with async_session_factory() as session:
             manager = MemoryManager(session)

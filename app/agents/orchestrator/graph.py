@@ -34,7 +34,7 @@ class OrchestratorGraphBuilder:
     def __init__(self, nodes: Optional[OrchestratorNodes] = None) -> None:
         self.nodes = nodes or OrchestratorNodes()
 
-    def build(self) -> StateGraph:
+    def build(self, checkpointer=None) -> StateGraph:
         workflow = StateGraph(OrchestratorState)
 
         workflow.add_node("supervisor", self.nodes.supervisor)
@@ -71,7 +71,7 @@ class OrchestratorGraphBuilder:
         workflow.add_edge("synthesizer", "emailer")
         workflow.add_edge("emailer", END)
 
-        return workflow.compile()
+        return workflow.compile(checkpointer=checkpointer)
 
     def _route_after_validation(self, state: OrchestratorState) -> Literal["retry", "analyze"]:
         errors = state.get("validation_errors", [])
@@ -94,10 +94,10 @@ class OrchestratorWorkflow:
     5. Email delivery
     """
 
-    def __init__(self, nodes: Optional[OrchestratorNodes] = None) -> None:
+    def __init__(self, nodes: Optional[OrchestratorNodes] = None, checkpointer=None) -> None:
         self.nodes = nodes or OrchestratorNodes()
         self.graph_builder = OrchestratorGraphBuilder(nodes=self.nodes)
-        self._graph = self.graph_builder.build()
+        self._graph = self.graph_builder.build(checkpointer=checkpointer)
 
     def run(self, task: str, topics: Optional[list[str]] = None) -> OrchestratorState:
         """Execute the orchestrator workflow.
@@ -144,6 +144,7 @@ class OrchestratorWorkflow:
 
 def create_orchestrator_workflow(
     nodes: Optional[OrchestratorNodes] = None,
+    checkpointer=None,
 ) -> OrchestratorWorkflow:
     """Factory function to create an orchestrator workflow."""
-    return OrchestratorWorkflow(nodes=nodes)
+    return OrchestratorWorkflow(nodes=nodes, checkpointer=checkpointer)

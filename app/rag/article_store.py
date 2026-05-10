@@ -23,7 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.logging import get_logger
 from app.core.models import Article as CoreArticle
-from app.memory.vector_store import VectorStore, EmbeddingConfig, SearchResult
+from app.rag.vector_store import VectorStore, EmbeddingConfig, SearchResult
 
 
 logger = get_logger(__name__)
