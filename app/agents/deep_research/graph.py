@@ -14,7 +14,7 @@ Architecture:
 from typing import Optional
 
 from langgraph.graph import END, START, StateGraph
-from langgraph.graph.graph import CompiledGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from app.agents.deep_research.state import (
     DeepResearchAgentState,
@@ -56,7 +56,7 @@ class DeepResearchGraphBuilder:
         self.config = config or DeepResearchConfig()
         self.nodes = nodes or DeepResearchNodes(config=self.config)
 
-    def build(self) -> CompiledGraph:
+    def build(self) -> CompiledStateGraph:
         """Build and compile the complete workflow graph.
 
         Returns:
@@ -82,7 +82,7 @@ class DeepResearchGraphBuilder:
 
         return main_graph.compile()
 
-    def _build_supervisor_subgraph(self) -> CompiledGraph:
+    def _build_supervisor_subgraph(self) -> CompiledStateGraph:
         """Build the supervisor subgraph.
 
         The supervisor manages research delegation to sub-agents.
@@ -146,7 +146,7 @@ class DeepResearchWorkflow:
         self.nodes = nodes or DeepResearchNodes(config=self.config)
         self.graph = self._build_graph()
 
-    def _build_graph(self) -> CompiledGraph:
+    def _build_graph(self) -> CompiledStateGraph:
         """Build the workflow graph.
 
         Returns:

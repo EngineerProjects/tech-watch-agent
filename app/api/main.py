@@ -149,6 +149,24 @@ class ProviderListResponse(BaseModel):
     current_model: str
 
 
+class OrchestratorRequest(BaseModel):
+    task: str = "Weekly tech watch"
+    topics: Optional[list[str]] = None
+    send_email: bool = True
+    mode: str = "v2"
+
+
+class OrchestratorResponse(BaseModel):
+    success: bool
+    report: Optional[str] = None
+    subject: Optional[str] = None
+    email_sent: bool
+    research_results_count: int = 0
+    plan_steps: int = 0
+    execution_time: Optional[float] = None
+    errors: list[str] = Field(default_factory=list)
+
+
 class ProviderHealthResponse(BaseModel):
     provider: str
     healthy: bool
@@ -268,8 +286,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     app = FastAPI(
         title="tech-watch-agent API",
-        version="0.2.0",
-        description="Advanced multi-agent tech watch platform with deep research capabilities",
+        version="0.3.0",
+        description="Advanced multi-agent tech watch platform with orchestrator, deep research, and newsletter capabilities",
         lifespan=lifespan,
     )
 
@@ -559,6 +577,47 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             user_uuid = uuid.UUID(user_id) if user_id else None
             stats = await repo.get_stats(user_uuid)
             return stats
+
+    # Orchestrator Endpoints
+
+    @app.post("/orchestrator/run", response_model=OrchestratorResponse, tags=["Orchestrator"])
+    async def run_orchestrator(payload: OrchestratorRequest) -> OrchestratorResponse:
+        """Run the orchestrator agent for research and report generation."""
+        from app.scheduler.service import OrchestratorScheduler
+
+        try:
+            scheduler = OrchestratorScheduler(
+                mode=payload.mode,
+                settings=resolved_settings,
+            )
+            result = await scheduler.run_task(
+                task=payload.task,
+                topics=payload.topics,
+                send_email=payload.send_email,
+            )
+
+            return OrchestratorResponse(
+                success=result.get("success", False),
+                report=result.get("report"),
+                subject=result.get("subject"),
+                email_sent=result.get("email_sent", False),
+                research_results_count=len(result.get("research_results", [])),
+                plan_steps=len(result.get("plan", [])),
+                execution_time=result.get("execution_time"),
+                errors=result.get("errors", []),
+            )
+        except Exception as exc:
+            logger.error("Orchestrator endpoint failed: %s", exc)
+            return OrchestratorResponse(
+                success=False,
+                email_sent=False,
+                errors=[str(exc)],
+            )
+
+    @app.post("/orchestrator/task", response_model=OrchestratorResponse, tags=["Orchestrator"])
+    async def run_orchestrator_task(payload: OrchestratorRequest) -> OrchestratorResponse:
+        """Alias for /orchestrator/run with full task control."""
+        return await run_orchestrator(payload)
 
     # Deep Research Endpoints
 

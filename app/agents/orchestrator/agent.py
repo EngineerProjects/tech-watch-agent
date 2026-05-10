@@ -1,0 +1,183 @@
+"""
+Orchestrator agent implementation.
+
+This is the main orchestrator agent that coordinates all other agents
+and tools to complete research tasks end-to-end.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Optional
+from dataclasses import dataclass, field
+
+from app.agents.base.base_agent import BaseAgent, AgentConfig, AgentResult
+from app.agents.orchestrator.config import OrchestratorConfig
+from app.agents.orchestrator.graph import OrchestratorWorkflow, create_orchestrator_workflow
+from app.agents.orchestrator.nodes import OrchestratorNodes
+from app.config.settings import Settings, get_settings
+from app.core.logging import get_logger
+
+
+logger = get_logger(__name__)
+
+
+class OrchestratorAgent(BaseAgent):
+    """Main orchestrator agent for comprehensive tech research.
+
+    This agent coordinates the full pipeline:
+    1. Planning - Generate execution plan from task
+    2. Research - Parallel tool dispatch (web, social, papers)
+    3. Collection - Aggregate all results
+    4. Validation - Ensure quality thresholds met
+    5. Analysis - Extract key insights
+    6. Synthesis - Create final report
+    7. Delivery - Send email
+
+    Uses LangGraph StateGraph with supervisor pattern.
+    Falls back to legacy NewsletterOrchestrator for V1 compatibility.
+
+    Attributes:
+        workflow: The compiled LangGraph workflow
+        nodes: The orchestrator nodes
+        max_articles: Max articles per research step
+        send_email: Whether to send email after completion
+    """
+
+    def __init__(
+        self,
+        config: Optional[OrchestratorConfig] = None,
+        settings: Optional[Settings] = None,
+        workflow: Optional[OrchestratorWorkflow] = None,
+        nodes: Optional[OrchestratorNodes] = None,
+    ) -> None:
+        if config is None:
+            config = OrchestratorConfig()
+
+        super().__init__(config=config, settings=settings)
+
+        self._workflow = workflow
+        self._nodes = nodes
+
+    @property
+    def config(self) -> OrchestratorConfig:
+        return self._config
+
+    @property
+    def name(self) -> str:
+        return "orchestrator"
+
+    @property
+    def description(self) -> str:
+        return "Main orchestrator that plans, coordinates research, and delivers reports"
+
+    async def setup(self) -> None:
+        """Set up agent resources."""
+        logger.info("Setting up orchestrator agent")
+
+        if self._nodes is None:
+            self._nodes = OrchestratorNodes(max_articles=5, min_sources=2)
+
+        if self._workflow is None:
+            self._workflow = create_orchestrator_workflow(nodes=self._nodes)
+
+        logger.info("Orchestrator agent setup complete")
+
+    async def execute(self, input_data: Any) -> AgentResult:
+        """Execute the orchestrator pipeline.
+
+        Args:
+            input_data: Can be:
+                - str: The research task
+                - dict: {"task": str, "topics": list[str], "send_email": bool}
+
+        Returns:
+            AgentResult with final_report, email_sent status, and metadata
+        """
+        start_time = datetime.now()
+
+        if isinstance(input_data, str):
+            task = input_data
+            topics: Optional[list[str]] = None
+            send_email = True
+        elif isinstance(input_data, dict):
+            task = input_data.get("task", str(input_data))
+            topics = input_data.get("topics")
+            send_email = input_data.get("send_email", True)
+        else:
+            task = str(input_data)
+            topics = None
+            send_email = True
+
+        logger.info("Orchestrator starting task: %s", task[:100])
+
+        try:
+            await self.setup()
+
+            result_state = self._workflow.run(task=task, topics=topics)
+
+            execution_time = (datetime.now() - start_time).total_seconds()
+
+            report = result_state.get("final_report", "")
+            email_sent = result_state.get("email_sent", False)
+            email_result = result_state.get("email_result")
+            errors = result_state.get("errors", [])
+            research_count = len(result_state.get("research_results", []))
+            plan_steps = len(result_state.get("plan", []))
+
+            metadata = {
+                "task": task[:200],
+                "plan_steps": plan_steps,
+                "research_results": research_count,
+                "email_sent": email_sent,
+                "email_result": email_result,
+                "execution_time_seconds": execution_time,
+                "iteration_count": result_state.get("iteration_count", 0),
+                "validation_errors": result_state.get("validation_errors", []),
+            }
+
+            if not report:
+                logger.error("Orchestrator produced no report")
+                return AgentResult.create_error(
+                    errors=errors if errors else ["No report generated"],
+                    metadata=metadata,
+                )
+
+            logger.info(
+                "Orchestrator completed: %d steps, %d results, email=%s (%.1fs)",
+                plan_steps, research_count, email_sent, execution_time,
+            )
+
+            return AgentResult.create_success(
+                output={
+                    "report": report,
+                    "email_sent": email_sent,
+                    "email_result": email_result,
+                    "research_results": result_state.get("research_results", []),
+                    "plan": result_state.get("plan", []),
+                },
+                metadata=metadata,
+            )
+
+        except Exception as exc:
+            logger.error("Orchestrator execution failed: %s", exc)
+            execution_time = (datetime.now() - start_time).total_seconds()
+            return AgentResult.create_error(
+                errors=[str(exc)],
+                metadata={
+                    "task": task[:200],
+                    "execution_time_seconds": execution_time,
+                },
+            )
+
+    async def cleanup(self) -> None:
+        """Clean up agent resources."""
+        logger.info("Orchestrator agent cleanup complete")
+
+
+def create_orchestrator_agent(
+    config: Optional[OrchestratorConfig] = None,
+    settings: Optional[Settings] = None,
+) -> OrchestratorAgent:
+    """Factory function to create an orchestrator agent."""
+    return OrchestratorAgent(config=config, settings=settings)

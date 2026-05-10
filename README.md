@@ -7,10 +7,12 @@ An open-source platform for automated technology monitoring and newsletter gener
 ## Features
 
 ### Core Capabilities
+- **Orchestrator Agent**: Central planner that coordinates research, analysis, and report generation. Uses plan-based execution with parallel tool dispatch.
 - **Newsletter Agent**: Automated newsletter generation from collected articles
 - **Deep Research Agent**: Multi-agent research system with supervisor-researcher pattern
 - **Semantic Search**: Vector-based article similarity and deduplication
 - **Multi-User Support**: User preferences and topic subscriptions
+- **V1/V2 Modes**: Backwards compatible newsletter workflow (V1) or full orchestrator pipeline (V2)
 
 ### Monitoring Tools
 - **GitHub**: Repository search, trending repos, commit tracking
@@ -220,6 +222,10 @@ RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 - `GET /llm/providers/{name}` - Get provider details
 - `GET /llm/providers/{name}/health` - Check provider reachability
 - `POST /llm/providers/switch` - Switch provider (runtime, update .env to persist)
+
+### Orchestrator
+- `POST /orchestrator/run` - Run full research pipeline (V2 orchestrator)
+- `POST /orchestrator/task` - Run research task with full control
 
 ## Development
 

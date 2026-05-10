@@ -7,7 +7,7 @@ import uvicorn
 
 from app.config.settings import get_settings
 from app.core.logging import configure_logging, get_logger
-from app.scheduler.service import NewsletterOrchestrator
+from app.scheduler.service import OrchestratorScheduler
 
 
 logger = get_logger(__name__)
@@ -41,7 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-email",
         action="store_true",
-        help="Generate the newsletter without sending an email",
+        help="Generate the report without sending an email",
+    )
+    parser.add_argument(
+        "--v1",
+        action="store_true",
+        help="Use V1 newsletter workflow instead of V2 orchestrator",
     )
     return parser
 
@@ -64,13 +69,20 @@ def main() -> None:
         logger.info("Configuration is valid")
         return
 
-    orchestrator = NewsletterOrchestrator(settings=settings)
+    mode = "v1" if args.v1 else "v2"
+    orchestrator = OrchestratorScheduler(mode=mode, settings=settings)
 
     if args.mode == "once":
-        # `--no-email` is useful for validating crawl + agent output before
-        # Gmail credentials are configured.
         result = orchestrator.run_once(send_email=not args.no_email)
-        logger.info("Generated newsletter: %s", result.subject)
+        if result.get("success"):
+            logger.info(
+                "Generated report: %s (email=%s, steps=%d)",
+                result.get("subject", "unknown"),
+                result.get("email_sent", False),
+                len(result.get("plan", [])) if mode == "v2" else 0,
+            )
+        else:
+            logger.error("Failed: %s", result.get("errors", []))
         return
 
     if args.mode == "schedule":
