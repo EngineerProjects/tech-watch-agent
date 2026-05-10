@@ -53,6 +53,12 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+class Summary(BaseModel):
+    """Structured summary of a webpage."""
+    summary: str = Field(description="Comprehensive summary of the webpage content")
+    key_excerpts: str = Field(description="Key quotes or data points found on the page")
+
+
 class DeepResearchNodes:
     """Collection of nodes for the deep research agent.
 
@@ -210,6 +216,21 @@ class DeepResearchNodes:
             logger.warning("Content extraction failed for %s: %s", url, exc)
         return None
 
+    async def _summarize_content(self, content: str, topic: str) -> Optional[Summary]:
+        """Summarize webpage content specifically for the research topic."""
+        prompt = f"Summarize the following content in the context of the research topic: {topic}\n\nContent:\n{content[:15000]}"
+        try:
+            return await self._generate_completion(
+                prompt=prompt,
+                system_message="Summarize webpage content accurately and extract key excerpts.",
+                temperature=0.2,
+                max_tokens=1000,
+                response_model=Summary
+            )
+        except Exception as exc:
+            logger.warning("Summarization failed for topic %s: %s", topic, exc)
+            return None
+
     async def _generate_completion(
         self,
         prompt: str,
@@ -333,6 +354,8 @@ class DeepResearchNodes:
     ) -> dict[str, Any]:
         """Lead research supervisor that plans and delegates research."""
         from langgraph.types import Command
+        from langchain_core.messages import AIMessage
+        from pydantic import BaseModel, Field
 
         research_iterations = state.get("research_iterations", 0)
         
@@ -342,34 +365,15 @@ class DeepResearchNodes:
             return Command(goto="__end__")
 
         supervisor_messages = state.get("supervisor_messages", [])
-        messages_text = "\n".join([
-            f"{type(m).__name__}: {m.content if hasattr(m, 'content') else str(m)}"
-            for m in supervisor_messages
-        ])
-
-        prompt = f"""Based on the research brief and current progress, decide your next action.
-
-Research Brief:
-{state.get('research_brief', '')}
-
-Current Progress Summary:
-{messages_text[-4000:] if len(messages_text) > 4000 else messages_text}
-
-You MUST decide to either:
-1. Conduct more research on specific sub-topics (ConductResearch).
-2. Conclude that research is complete (ResearchComplete).
-
-Be decisive and efficient."""
-
-        # Use a union-like logic by trying to get one of the two models
-        # For simplicity in this implementation, we'll use a combined prompt or tool-like behavior
-        # Here we'll try to get ConductResearch or ResearchComplete
-        # A better way in LangGraph is to use bind_tools, but we are simulating it with response_model
         
         class SupervisorDecision(BaseModel):
-            action: str = Field(description="Action to take: 'research' or 'complete'")
+            """Decision taken by the lead researcher."""
+            action: str = Field(description="Action to take: 'research' (delegate tasks) or 'complete' (finish research)")
             topics: list[str] = Field(default_factory=list, description="Sub-topics for 'research' action. Max 3.")
-            reason: str = Field(description="Reason for this decision")
+            reflection: str = Field(description="Internal reflection on current progress and strategy")
+            reason: str = Field(description="Public reason for this decision")
+
+        prompt = f"Based on the research brief and current progress, decide your next action.\n\nResearch Brief:\n{state.get('research_brief', '')}\n\nCurrent supervisor history:\n{get_buffer_string(supervisor_messages[-5:])}\n\nYou MUST decide to either:\n1. Conduct more research on specific sub-topics (ConductResearch).\n2. Conclude that research is complete (ResearchComplete).\n\nUse your reflection to plan the next steps carefully."
 
         decision: SupervisorDecision = await self._generate_completion(
             prompt=prompt,
@@ -379,7 +383,7 @@ Be decisive and efficient."""
                 max_concurrent_research_units=self.config.max_concurrent_research_units,
             ),
             temperature=0.4,
-            max_tokens=800,
+            max_tokens=1000,
             response_model=SupervisorDecision,
         )
 
@@ -387,15 +391,20 @@ Be decisive and efficient."""
             logger.warning("Supervisor failed to make a structured decision. Stopping.")
             return Command(goto="__end__")
 
+        logger.info("Supervisor Reflection: %s", decision.reflection)
+
         if decision.action == "complete" or not decision.topics:
-            return Command(goto="__end__")
+            return Command(
+                goto="__end__",
+                update={"supervisor_messages": [AIMessage(content=f"Research complete. Reason: {decision.reason}")]}
+            )
 
         return Command(
             goto="supervisor_tools",
             update={
-                "supervisor_messages": [AIMessage(content=f"Decision: {decision.action}. Reason: {decision.reason}")],
+                "supervisor_messages": [AIMessage(content=f"Delegating research on topics: {', '.join(decision.topics)}. Reason: {decision.reason}")],
                 "research_iterations": research_iterations + 1,
-                "metadata": {"next_topics": decision.topics} # Temporary storage for tools node
+                "metadata": {"next_topics": decision.topics}
             },
         )
 
@@ -428,10 +437,10 @@ Be decisive and efficient."""
             return Command(
                 goto="supervisor",
                 update={
-                    "supervisor_messages": [AIMessage(content=f"Completed research on: {', '.join(research_topics)}")],
+                    "supervisor_messages": [AIMessage(content=f"Research units returned {len(research_results)} findings.")],
                     "notes": notes,
                     "raw_notes": raw_notes,
-                    "metadata": {"next_topics": []} # Clear temporary storage
+                    "metadata": {"next_topics": []}
                 },
             )
 
@@ -442,23 +451,8 @@ Be decisive and efficient."""
         topics: list[str],
         parent_state: SupervisorState,
     ) -> list[dict[str, Any]]:
-        """Execute research units in parallel.
-
-        Args:
-            topics: List of research topics
-            parent_state: Parent supervisor state
-
-        Returns:
-            List of research results
-        """
-        tasks = []
-        for topic in topics:
-            task = self._execute_single_researcher(
-                research_topic=topic,
-                parent_config=parent_state,
-            )
-            tasks.append(task)
-
+        """Execute research units in parallel."""
+        tasks = [self._execute_single_researcher(topic, parent_state) for topic in topics]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         processed_results = []
@@ -476,143 +470,70 @@ Be decisive and efficient."""
         research_topic: str,
         parent_config: dict,
     ) -> dict[str, Any]:
-        """Execute a single research unit.
-
-        Args:
-            research_topic: The topic to research
-            parent_config: Configuration from parent
-
-        Returns:
-            Research results dict
-        """
+        """Execute a single research unit with deep exploration."""
         researcher_state: ResearcherState = {
             "research_topic": research_topic,
-            "researcher_messages": [HumanMessage(content=research_topic)],
+            "researcher_messages": [HumanMessage(content=f"Researching topic: {research_topic}")],
             "compressed_research": "",
             "tool_call_iterations": 0,
             "raw_notes": [],
         }
 
-        # Run researcher loop with real Tavily search
-        for iteration in range(min(5, self.config.max_react_tool_calls)):
+        max_iterations = self.config.max_react_tool_calls
+        
+        for iteration in range(max_iterations):
             messages_text = get_buffer_string(researcher_state["researcher_messages"])
+            reflection_prompt = f"You are researching: {research_topic}\nCurrent progress:\n{messages_text[-4000:]}\n\nAnalyze what you have found and what is missing. If you have enough information, say 'COMPLETE'. Otherwise, provide a specific search query to fill the gaps."
 
-            # LLM decides what to search next
-            response = await self._generate_completion(
-                prompt=f"""Research topic: {research_topic}
-
-Current conversation:
-{messages_text}
-
-Based on the research topic and current conversation, decide what to search for next.
-If you need more information, provide a specific search query.
-If you have enough information, say "RESEARCH_COMPLETE".
-
-Return exactly one of:
-- A search query (1-2 sentences, specific)
-- "RESEARCH_COMPLETE" if you have enough information
-
-Keep search queries focused and specific for best results.""",
-                system_message="You are a research assistant. Generate specific search queries.",
-                temperature=0.3,
-                max_tokens=500,
+            reflection = await self._generate_completion(
+                prompt=reflection_prompt,
+                system_message="You are a meticulous research analyst. Reflect on gaps and plan next steps.",
+                temperature=0.2,
+                max_tokens=500
             )
-
-            if "RESEARCH_COMPLETE" in response.strip().upper()[:20]:
+            
+            researcher_state["researcher_messages"].append(AIMessage(content=f"[Reflection] {reflection}"))
+            if "COMPLETE" in reflection.upper()[:20]:
                 break
 
-            # Execute search with fallback chain (Tavily → web_search)
-            search_result = await self._search_with_fallback(response.strip())
+            search_query = reflection.split("\n")[-1].strip()
+            if not search_query or len(search_query) < 5:
+                search_query = research_topic
 
+            search_result = await self._search_with_fallback(search_query)
             results_list = search_result.get("results", [])
-            answer = search_result.get("answer", "")
+            if not results_list:
+                researcher_state["researcher_messages"].append(AIMessage(content="No results found for this query."))
+                continue
 
-            if results_list or answer:
-                search_summary = f"Search: {response.strip()}\n\n"
-                if answer:
-                    search_summary += f"AI Answer: {answer}\n\n"
-                if results_list:
-                    for r in results_list[:3]:
-                        search_summary += f"- [{r.get('title', '')}]({r.get('url', '')}): {r.get('content', '')[:200]}...\n"
+            summarization_tasks = []
+            valid_results = []
+            for res in results_list[:3]:
+                url = res.get("url", "")
+                if url:
+                    content = await self._extract_content(url)
+                    if content:
+                        summarization_tasks.append(self._summarize_content(content, research_topic))
+                        valid_results.append(res)
+            
+            if summarization_tasks:
+                summaries = await asyncio.gather(*summarization_tasks)
+                for i, summary in enumerate(summaries):
+                    if summary:
+                        url = valid_results[i].get("url")
+                        researcher_state["raw_notes"].append(f"Source: {url}\nSummary: {summary.summary}\nExcerpts: {summary.key_excerpts}")
+                        researcher_state["researcher_messages"].append(AIMessage(content=f"[Findings from {url}]\n{summary.summary[:1000]}..."))
 
-                researcher_state["raw_notes"].append({
-                    "query": response.strip(),
-                    "answer": answer,
-                    "sources": [{"title": r.get("title"), "url": r.get("url")} for r in results_list[:5]],
-                })
+            researcher_state["tool_call_iterations"] += 1
 
-                # Extract detailed content from top URLs IN PARALLEL
-                extracted_results = await self._extract_content_parallel(results_list[:3])
-
-                for extracted in extracted_results:
-                    researcher_state["raw_notes"].append(extracted)
-                    content_preview = extracted.get("content", "")[:2000]
-                    tool_used = extracted.get("tool_used", "unknown")
-                    researcher_state["researcher_messages"].append(
-                        AIMessage(content=f"[Content extracted via {tool_used}]\n{content_preview}...")
-                    )
-
-                researcher_state["researcher_messages"].append(
-                    AIMessage(content=f"[Search Results]\n{search_summary}")
-                )
-                researcher_state["tool_call_iterations"] += 1
-            else:
-                researcher_state["researcher_messages"].append(
-                    AIMessage(content=f"[Search Error] No results found for: {response.strip()}")
-                )
-
-            # Use think_tool to reflect on progress and decide next action
-            think_tool = self._get_think_tool()
-            messages_text = get_buffer_string(researcher_state["researcher_messages"])
-            think_result = await think_tool.execute({
-                "input": f"Research topic: {research_topic}\n\nMy current research:\n{messages_text}\n\nI've done {researcher_state['tool_call_iterations']} search(es). Should I search more or stop?",
-                "depth": "standard",
-            })
-
-            if think_result.get("success") and think_result.get("data"):
-                reflection = think_result["data"]
-                confidence = reflection.get("confidence", "medium")
-                recommended = reflection.get("recommended_action", "")
-
-                researcher_state["researcher_messages"].append(
-                    AIMessage(content=f"[Think Reflection] Confidence: {confidence}. {recommended}")
-                )
-
-                # Stop if confidence is high or recommended action says to stop
-                if confidence == "high" or "stop" in recommended.lower()[:50]:
-                    break
-            elif iteration == min(5, self.config.max_react_tool_calls) - 1:
-                # Force stop at max iterations
-                break
-
-        # Compress research results
         compressed = await self._compress_research(researcher_state)
-
-        return {
-            "compressed_research": compressed,
-            "raw_notes": [get_buffer_string(researcher_state["researcher_messages"])],
-        }
+        return {"compressed_research": compressed, "raw_notes": researcher_state["raw_notes"]}
 
     async def _compress_research(self, researcher_state: ResearcherState) -> str:
-        """Compress research findings into a summary.
-
-        Args:
-            researcher_state: The researcher state
-
-        Returns:
-            Compressed research summary
-        """
+        """Compress research findings into a summary."""
         messages = researcher_state.get("researcher_messages", [])
         messages_text = get_buffer_string(messages)
-
-        prompt = f"""{COMPRESS_RESEARCH_SIMPLE_HUMAN_MESSAGE}
-
-Research topic: {researcher_state.get('research_topic', '')}
-
-Messages to compress:
-{messages_text}
-"""
-
+        prompt = f"{COMPRESS_RESEARCH_SIMPLE_HUMAN_MESSAGE}\n\nResearch topic: {researcher_state.get('research_topic', '')}\n\nMessages to compress:\n{messages_text}"
         return await self._generate_completion(
             prompt=prompt,
             system_message=COMPRESS_RESEARCH_SYSTEM_PROMPT.format(date=get_today_str()),
@@ -621,80 +542,42 @@ Messages to compress:
         )
 
     def _extract_research_topics(self, content: str) -> list[str]:
-        """Extract research topics from content.
-
-        Args:
-            content: Text content to analyze
-
-        Returns:
-            List of research topics
-        """
+        """Extract research topics from content."""
         topics = []
-
-        # Simple extraction - look for topic indicators
         lines = content.split("\n")
         for line in lines:
             line = line.strip()
             if line and len(line) > 10:
-                # Remove common prefixes
                 for prefix in ["- ", "* ", "1. ", "2. ", "3. ", "Topic: ", "Research: "]:
                     if line.startswith(prefix):
                         line = line[len(prefix):]
                 if line:
                     topics.append(line)
-
-        return topics[:3]  # Limit to 3 topics
+        return topics[:3]
 
     async def final_report_generation(
         self,
         state: DeepResearchAgentState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Generate the final research report.
-
-        This node takes all collected research and synthesizes it
-        into a comprehensive final report.
-
-        Args:
-            state: Current agent state
-            config: Optional runnable config
-
-        Returns:
-            Update dict for final state
-        """
+        """Generate the final research report."""
         research_brief = state.get("research_brief", "")
         notes = state.get("notes", [])
-        messages = state.get("messages", [])
-        messages_text = get_buffer_string(messages)
         findings = "\n\n".join(notes) if notes else "No findings collected."
-
         prompt = FINAL_REPORT_GENERATION_PROMPT.format(
             research_brief=research_brief,
-            messages=messages_text,
+            messages=get_buffer_string(state.get("messages", [])),
             findings=findings,
             date=get_today_str(),
         )
-
         final_report = await self._generate_completion(
             prompt=prompt,
             temperature=0.4,
             max_tokens=self.config.final_report_model_max_tokens,
         )
-
-        return {
-            "final_report": final_report,
-            "messages": [AIMessage(content=final_report)],
-        }
+        return {"final_report": final_report, "messages": [AIMessage(content=final_report)]}
 
 
-# Factory function for creating nodes
 def create_nodes(config: Optional[DeepResearchConfig] = None) -> DeepResearchNodes:
-    """Create a DeepResearchNodes instance.
-
-    Args:
-        config: Optional configuration
-
-    Returns:
-        DeepResearchNodes instance
-    """
+    """Create a DeepResearchNodes instance."""
     return DeepResearchNodes(config=config)
