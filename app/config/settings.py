@@ -19,6 +19,10 @@ class Settings:
     app_port: int = 8000
     log_level: str = "INFO"
 
+    # Database configuration
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch"
+    database_sync_url: str = "postgresql://postgres:postgres@localhost:5432/techwatch"
+
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_api_key: str = ""
     llm_model: str = "openai/gpt-4.1-mini"
@@ -67,6 +71,14 @@ class Settings:
             app_host=os.getenv("APP_HOST", "0.0.0.0"),
             app_port=int(os.getenv("APP_PORT", "8000")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
+            database_url=os.getenv(
+                "DATABASE_URL",
+                "postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch",
+            ),
+            database_sync_url=os.getenv(
+                "DATABASE_SYNC_URL",
+                "postgresql://postgres:postgres@localhost:5432/techwatch",
+            ),
             llm_base_url=os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
             llm_api_key=os.getenv("LLM_API_KEY", ""),
             llm_model=os.getenv("LLM_MODEL", "openai/gpt-4.1-mini"),

@@ -1,4 +1,37 @@
 services:
+  # PostgreSQL database for persistent storage
+  postgres:
+    image: postgres:16-alpine
+    container_name: tech-watch-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: techwatch
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and task queue (future use)
+  redis:
+    image: redis:7-alpine
+    container_name: tech-watch-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI application server
   tech-watch-api:
     build:
       context: ..
@@ -7,6 +40,11 @@ services:
     env_file:
       - path: ../.env
         required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ../logs:/app/logs
       - ../credentials.json:/app/credentials.json:ro
@@ -16,6 +54,7 @@ services:
     command: ["python", "-m", "app.main", "--mode", "api"]
     restart: unless-stopped
 
+  # One-time newsletter generation
   tech-watch-once:
     build:
       context: ..
@@ -24,9 +63,18 @@ services:
     env_file:
       - path: ../.env
         required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ../logs:/app/logs
       - ../credentials.json:/app/credentials.json:ro
       - ../token.json:/app/token.json
     command: ["python", "-m", "app.main", "--mode", "once", "--no-email"]
     profiles: ["manual"]
+
+volumes:
+  postgres_data:
+  redis_data:
