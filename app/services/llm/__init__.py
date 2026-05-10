@@ -62,6 +62,60 @@ class ChatCompletionClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         extra_headers: dict[str, str] | None = None,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+    ) -> str:
+        import time
+
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                return self._make_request(
+                    prompt=prompt,
+                    system_message=system_message,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    extra_headers=extra_headers,
+                )
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code == 429:
+                    # Rate limited - exponential backoff
+                    delay = initial_delay * (2 ** attempt)
+                    logger.warning(
+                        "LLM rate limited (attempt %d/%d). Retrying in %.1fs...",
+                        attempt + 1, max_retries, delay
+                    )
+                    time.sleep(delay)
+                elif exc.response.status_code >= 500:
+                    # Server error - retry with backoff
+                    delay = initial_delay * (2 ** attempt)
+                    logger.warning(
+                        "LLM server error %d (attempt %d/%d). Retrying in %.1fs...",
+                        exc.response.status_code, attempt + 1, max_retries, delay
+                    )
+                    time.sleep(delay)
+                else:
+                    # Client error - don't retry
+                    logger.error("LLM request failed: %s", exc)
+                    return ""
+            except httpx.HTTPError as exc:
+                logger.error("LLM request failed: %s", exc)
+                return ""
+
+        if last_error:
+            logger.error("LLM request failed after %d retries: %s", max_retries, last_error)
+        return ""
+
+    def _make_request(
+        self,
+        prompt: str,
+        system_message: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> str:
         payload = {
             "model": model or self.default_model,
@@ -93,9 +147,6 @@ class ChatCompletionClient:
             )
             response.raise_for_status()
             data = response.json()
-        except httpx.HTTPError as exc:
-            logger.error("LLM request failed: %s", exc)
-            return ""
         finally:
             if owns_client:
                 client.close()

@@ -167,3 +167,7 @@ analyse la structure actuelle du projet et propose :
 10. quel roadmap technique recommander pour les prochaines semaines.
 
 Agis comme si tu participais réellement au développement du projet.
+
+---
+
+lis et comprends mon code, actuellement, je veux tester le workflow complet de deepsearch avec /home/amiche/Projects/tech-watch-agent/.env si besoin pour nous assurer que ça fonctionne normalement d'abord avant de l'intégrer à l'orchestrateur.

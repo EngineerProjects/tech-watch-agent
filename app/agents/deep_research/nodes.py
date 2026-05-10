@@ -411,10 +411,32 @@ Be decisive and efficient. Don't over-research.
         )
 
         # Determine routing based on response
-        # (Simplified - in production use tool calling)
         research_iterations = state.get("research_iterations", 0)
 
-        if "research is complete" in response.lower() or "sufficient" in response.lower():
+        # Handle empty response (rate limiting or errors)
+        if not response or len(response.strip()) < 10:
+            logger.warning("Supervisor received empty response (likely rate limited). Stopping research.")
+            return Command(
+                goto="__end__",
+                update={
+                    "notes": state.get("notes", []),
+                    "raw_notes": state.get("raw_notes", []),
+                },
+            )
+
+        # Check for completion signals
+        if any(x in response.lower() for x in ["research is complete", "sufficient", "enough information", "complete"]):
+            return Command(
+                goto="__end__",
+                update={
+                    "notes": state.get("notes", []),
+                    "raw_notes": state.get("raw_notes", []),
+                },
+            )
+
+        # Check iteration limit
+        if research_iterations >= self.config.max_researcher_iterations:
+            logger.info("Max research iterations reached (%d). Stopping.", research_iterations)
             return Command(
                 goto="__end__",
                 update={
@@ -453,7 +475,17 @@ Be decisive and efficient. Don't over-research.
         supervisor_messages = state.get("supervisor_messages", [])
         research_iterations = state.get("research_iterations", 0)
 
-        if not supervisor_messages:
+        # Check for empty supervisor message (rate limited LLM)
+        if supervisor_messages:
+            last_msg = supervisor_messages[-1]
+            content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+            if not content or len(content.strip()) < 10:
+                logger.warning("Supervisor tools received empty message. Exiting research loop.")
+                return Command(
+                    goto="__end__",
+                    update={"notes": state.get("notes", []), "raw_notes": state.get("raw_notes", [])},
+                )
+        else:
             return Command(
                 goto="__end__",
                 update={"notes": [], "raw_notes": []},

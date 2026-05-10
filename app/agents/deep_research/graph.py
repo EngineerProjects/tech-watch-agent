@@ -185,20 +185,23 @@ class DeepResearchWorkflow:
 
         try:
             logger.info("Starting deep research workflow")
-            result = self.graph.invoke(
-                initial_state,
-                config={
-                    "configurable": {
-                        "research_model": self.config.research_model,
-                        "compression_model": self.config.compression_model,
-                        "final_report_model": self.config.final_report_model,
-                        "max_researcher_iterations": self.config.max_researcher_iterations,
-                        "max_react_tool_calls": self.config.max_react_tool_calls,
-                        "max_concurrent_research_units": self.config.max_concurrent_research_units,
-                        "allow_clarification": self.config.allow_clarification,
-                        "research_depth": self.config.research_depth,
-                    }
-                },
+            import asyncio
+            result = asyncio.get_event_loop().run_until_complete(
+                self.graph.ainvoke(
+                    initial_state,
+                    config={
+                        "configurable": {
+                            "research_model": self.config.research_model,
+                            "compression_model": self.config.compression_model,
+                            "final_report_model": self.config.final_report_model,
+                            "max_researcher_iterations": self.config.max_researcher_iterations,
+                            "max_react_tool_calls": self.config.max_react_tool_calls,
+                            "max_concurrent_research_units": self.config.max_concurrent_research_units,
+                            "allow_clarification": self.config.allow_clarification,
+                            "research_depth": self.config.research_depth,
+                        }
+                    },
+                )
             )
             logger.info("Deep research workflow completed")
             return result

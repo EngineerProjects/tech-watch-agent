@@ -107,6 +107,12 @@ class DeepResearchAgent(BaseAgent):
         Returns:
             AgentResult containing the generated report
         """
+        import asyncio
+
+        # Ensure setup is done
+        if self._workflow is None or self._nodes is None:
+            await self.setup()
+
         # Extract input components
         if isinstance(input_data, str):
             query = input_data
@@ -126,13 +132,36 @@ class DeepResearchAgent(BaseAgent):
                 errors=["No research query provided"],
             )
 
+        import asyncio
+
         logger.info("Starting deep research for query: %s", query[:100])
 
         try:
-            # Run the workflow
-            result = self._workflow.run(
-                messages=messages,
-                research_brief=research_brief,
+            # Run the workflow asynchronously
+            result = await self._workflow.graph.ainvoke(
+                {
+                    "messages": messages,
+                    "supervisor_messages": [],
+                    "research_brief": research_brief or "",
+                    "notes": [],
+                    "raw_notes": [],
+                    "final_report": "",
+                    "metadata": {},
+                    "errors": [],
+                },
+                config={
+                    "recursion_limit": 50,
+                    "configurable": {
+                        "research_model": self.config.research_model,
+                        "compression_model": self.config.compression_model,
+                        "final_report_model": self.config.final_report_model,
+                        "max_researcher_iterations": self.config.max_researcher_iterations,
+                        "max_react_tool_calls": self.config.max_react_tool_calls,
+                        "max_concurrent_research_units": self.config.max_concurrent_research_units,
+                        "allow_clarification": self.config.allow_clarification,
+                        "research_depth": self.config.research_depth,
+                    }
+                },
             )
 
             # Extract the final report
