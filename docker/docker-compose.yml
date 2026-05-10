@@ -1,0 +1,32 @@
+services:
+  tech-watch-api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: tech-watch-api
+    env_file:
+      - path: ../.env
+        required: false
+    volumes:
+      - ../logs:/app/logs
+      - ../credentials.json:/app/credentials.json:ro
+      - ../token.json:/app/token.json
+    ports:
+      - "8000:8000"
+    command: ["python", "-m", "app.main", "--mode", "api"]
+    restart: unless-stopped
+
+  tech-watch-once:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: tech-watch-once
+    env_file:
+      - path: ../.env
+        required: false
+    volumes:
+      - ../logs:/app/logs
+      - ../credentials.json:/app/credentials.json:ro
+      - ../token.json:/app/token.json
+    command: ["python", "-m", "app.main", "--mode", "once", "--no-email"]
+    profiles: ["manual"]
