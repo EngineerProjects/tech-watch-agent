@@ -87,6 +87,8 @@ class DeepResearchNodes:
         self._think_tool = None
         self._content_extractor = None
         self._web_search_tool = None
+        self._scholar_tool = None
+        self._research_paper_tool = None
 
     @property
     def llm_client(self):
@@ -124,19 +126,22 @@ class DeepResearchNodes:
             self._web_search_tool = NewsSearchService()
         return self._web_search_tool
 
+    def _get_scholar_tool(self) -> Any:
+        """Lazy load Google Scholar tool."""
+        if self._scholar_tool is None:
+            from app.tools.web.scholar import GoogleScholarTool
+            self._scholar_tool = GoogleScholarTool()
+        return self._scholar_tool
+
+    def _get_research_paper_tool(self) -> Any:
+        """Lazy load research paper tool."""
+        if self._research_paper_tool is None:
+            from app.tools.social.research_paper import ResearchPaperTool
+            self._research_paper_tool = ResearchPaperTool()
+        return self._research_paper_tool
+
     async def _search_with_fallback(self, query: str) -> dict[str, Any]:
-        """Execute search with multi-tool fallback chain.
-
-        Tries tools in order:
-        1. Tavily (best quality, requires API key)
-        2. Web search (DuckDuckGo, free fallback)
-
-        Args:
-            query: Search query
-
-        Returns:
-            Search results dict with 'results' and 'answer' keys
-        """
+        """Execute search with multi-tool fallback chain."""
         # Try Tavily first
         tavily = self._get_tavily_tool()
         if tavily._api_key:
@@ -146,6 +151,16 @@ class DeepResearchNodes:
                     return result.get("data", {})
             except Exception as exc:
                 logger.debug("Tavily search failed: %s", exc)
+
+        # Try Google Scholar for potentially academic topics
+        scholar = self._get_scholar_tool()
+        if scholar._api_key:
+            try:
+                result = await scholar.execute({"query": query, "limit": 5})
+                if result.get("success"):
+                    return result.get("data", {})
+            except Exception as exc:
+                logger.debug("Scholar search failed: %s", exc)
 
         # Fallback to web search
         web_search = self._get_web_search_tool()
@@ -202,7 +217,31 @@ class DeepResearchNodes:
         return [r for r in results if isinstance(r, dict) and r.get("content")]
 
     async def _extract_content(self, url: str) -> Optional[str]:
-        """Extract clean content from a URL using content_extractor with fallback."""
+        """Extract clean content from a URL using content_extractor or research_paper tool."""
+        if not url:
+            return None
+            
+        # If it's a PDF, use specialized research paper tool
+        if url.lower().endswith(".pdf") or "arxiv.org/pdf" in url.lower():
+            try:
+                research_paper = self._get_research_paper_tool()
+                # We need pymupdf installed for this to work
+                result = await research_paper.execute({
+                    "action": "extract_text",
+                    "url": url,
+                    "extract_sections": True
+                })
+                if result.get("success"):
+                    data = result.get("data", {})
+                    text = data.get("text", "")
+                    # Prepend metadata if available
+                    sections = data.get("sections", {})
+                    if sections:
+                        text = f"Sections Extracted:\n{json.dumps(sections, indent=2)}\n\nFull Text Snippet:\n{text[:5000]}"
+                    return text
+            except Exception as exc:
+                logger.warning("PDF extraction failed for %s: %s", url, exc)
+
         try:
             extractor = self._get_content_extractor()
             result = await extractor.execute({
