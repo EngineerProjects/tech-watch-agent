@@ -84,8 +84,8 @@ Returns a structured reflection with: key_insights, gaps, recommended_action, co
 """
 
     @property
-    def category(self) -> str:
-        return ToolCategory.UTILITY.value
+    def category(self) -> ToolCategory:
+        return ToolCategory.UTILITY
 
     @property
     def parameters(self) -> dict[str, Any]:

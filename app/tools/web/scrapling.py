@@ -112,8 +112,8 @@ Output is stripped of all noise and formatted as clean {self._output_format}.
 """
 
     @property
-    def category(self) -> str:
-        return ToolCategory.WEB.value
+    def category(self) -> ToolCategory:
+        return ToolCategory.CRAWL
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -207,49 +207,42 @@ Output is stripped of all noise and formatted as clean {self._output_format}.
     async def _fetch_basic(self, url: str, selector: str, instructions: str, output_fmt: str) -> tuple[str, dict]:
         """Fetch using basic HTTP requests with TLS fingerprint."""
         fetcher = self._get_fetcher()
-        response = await fetcher.fetch(url)
-        return self._process_content(response.html, selector, instructions, output_fmt)
+        response = fetcher.get(url)
+        return self._process_content(response, selector, instructions, output_fmt)
 
     async def _fetch_stealth(self, url: str, selector: str, instructions: str, output_fmt: str) -> tuple[str, dict]:
         """Fetch using stealth mode for anti-bot bypass."""
-        from scrapling.fetchers.stealth import StealthyFetcher
-        fetcher = StealthyFetcher(timeout=self._timeout)
-        try:
-            response = await fetcher.fetch(url)
-        finally:
-            await fetcher.close()
-        return self._process_content(response.html, selector, instructions, output_fmt)
+        from scrapling import StealthyFetcher
+        fetcher = StealthyFetcher()
+        response = fetcher.get(url)
+        return self._process_content(response, selector, instructions, output_fmt)
 
     async def _fetch_dynamic(self, url: str, selector: str, instructions: str, output_fmt: str) -> tuple[str, dict]:
         """Fetch using dynamic browser automation."""
-        from scrapling.fetchers.dynamic import DynamicFetcher
-        fetcher = self._get_dynamic_fetcher()
-        try:
-            response = await fetcher.fetch(url)
-        finally:
-            await fetcher.close()
-        return self._process_content(response.html, selector, instructions, output_fmt)
+        from scrapling import DynamicFetcher
+        fetcher = DynamicFetcher()
+        response = fetcher.get(url)
+        return self._process_content(response, selector, instructions, output_fmt)
 
     def _get_fetcher(self):
         """Get or create the basic fetcher instance."""
         if self._fetcher_instance is None:
-            from scrapling.fetchers.core import Fetcher
-            self._fetcher_instance = Fetcher(timeout=self._timeout)
+            from scrapling import Fetcher
+            self._fetcher_instance = Fetcher()
         return self._fetcher_instance
 
     def _get_dynamic_fetcher(self):
         """Get or create the dynamic fetcher instance."""
         if self._dynamic_fetcher is None:
-            from scrapling.fetchers.dynamic import DynamicFetcher
-            self._dynamic_fetcher = DynamicFetcher(timeout=self._timeout)
+            from scrapling import DynamicFetcher
+            self._dynamic_fetcher = DynamicFetcher()
         return self._dynamic_fetcher
 
-    def _process_content(self, html: str, selector: str, instructions: str, output_fmt: str) -> tuple[str, dict]:
-        """Process raw HTML: clean → extract main → convert to format."""
-        from scrapling.parser import Selector
+    def _process_content(self, page, selector: str, instructions: str, output_fmt: str) -> tuple[str, dict]:
+        """Process raw page: clean → extract main → convert to format."""
+        from scrapling import Selector
 
         if selector:
-            page = Selector(html)
             try:
                 if selector.startswith("//"):
                     elements = page.xpath(selector)
@@ -264,13 +257,12 @@ Output is stripped of all noise and formatted as clean {self._output_format}.
                 logger.warning("Selector extraction failed: %s", exc)
 
         if instructions:
-            page = Selector(html)
             content = self._adaptive_extract(page, instructions)
             if content:
                 cleaned = clean_html_content(content)
                 return (html_to_markdown(cleaned) if output_fmt == "markdown" else extract_main_content(content)), {"extraction_method": "instructions"}
 
-        raw_cleaned = clean_html_content(html)
+        raw_cleaned = clean_html_content(page.html_content)
         main_content = extract_main_content(raw_cleaned)
         if output_fmt == "markdown":
             final_content = self._text_to_markdown(main_content)

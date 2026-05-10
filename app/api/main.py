@@ -214,7 +214,8 @@ async def lifespan(app: FastAPI):
         logger.warning("Database initialization skipped: %s", exc)
 
     # Initialize global tool registry with default tools
-    _register_default_tools()
+    from app.config.settings import get_settings
+    _register_default_tools(get_settings())
 
     yield
 
@@ -226,9 +227,10 @@ async def lifespan(app: FastAPI):
         logger.warning("Database cleanup skipped: %s", exc)
 
 
-def _register_default_tools():
+def _register_default_tools(settings: Optional[Settings] = None) -> None:
     """Register default tools in the global registry."""
     registry = get_global_registry()
+    resolved_settings = settings or get_settings()
 
     # Only register if not already registered
     if "web_search" not in registry:

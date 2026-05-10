@@ -98,8 +98,8 @@ Input: {"url": "...", "strategy": "markdown|speed|reliability"}
 """
 
     @property
-    def category(self) -> str:
-        return ToolCategory.WEB.value
+    def category(self) -> ToolCategory:
+        return ToolCategory.CRAWL
 
     @property
     def parameters(self) -> dict[str, Any]:

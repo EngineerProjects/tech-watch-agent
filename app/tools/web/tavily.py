@@ -70,8 +70,8 @@ Use this for conducting comprehensive research on any topic. Tavily provides:
 Best for: deep research, fact-checking, multi-source synthesis."""
 
     @property
-    def category(self) -> str:
-        return ToolCategory.SEARCH.value
+    def category(self) -> ToolCategory:
+        return ToolCategory.SEARCH
 
     @property
     def parameters(self) -> dict[str, Any]:

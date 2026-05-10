@@ -96,8 +96,8 @@ Output is always clean markdown with proper headers, lists, and formatting.
 """
 
     @property
-    def category(self) -> str:
-        return ToolCategory.WEB.value
+    def category(self) -> ToolCategory:
+        return ToolCategory.CRAWL
 
     @property
     def parameters(self) -> dict[str, Any]:
