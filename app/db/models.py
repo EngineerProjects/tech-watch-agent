@@ -124,7 +124,7 @@ class Article(Base):
     published_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     relevance_score: Mapped[int] = mapped_column(Integer, default=0)
     embedding_vector: Mapped[Optional[list[float]]] = mapped_column(JSONB, nullable=True)
-    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    meta_data: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -267,7 +267,7 @@ class ResearchSession(Base):
     final_report: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notes: Mapped[list] = mapped_column(JSONB, default=list)
     raw_notes: Mapped[list] = mapped_column(JSONB, default=list)
-    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    meta_data: Mapped[dict] = mapped_column(JSONB, default=dict)
     iterations_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -340,7 +340,7 @@ class UserSession(Base):
     preferences: Mapped[dict] = mapped_column(JSONB, default=dict)
     topics: Mapped[list] = mapped_column(JSONB, default=list)
     seen_article_ids: Mapped[list] = mapped_column(JSONB, default=list)
-    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    meta_data: Mapped[dict] = mapped_column(JSONB, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

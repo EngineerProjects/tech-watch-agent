@@ -18,6 +18,8 @@ An open-source platform for automated technology monitoring and newsletter gener
 - **ArXiv**: Academic paper discovery, category browsing
 - **RSS/Atom**: Feed aggregation from multiple sources
 - **Web Search**: News article collection and ranking
+- **YouTube**: Video transcript extraction
+- **Research Papers**: PDF download, text extraction, Semantic Scholar search, arXiv integration
 
 ### Technical Features
 - **Async-first**: Full async/await for concurrent operations
@@ -159,9 +161,10 @@ Edit `.env` file with your settings:
 # Database
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch
 
-# LLM Provider
-LLM_API_KEY=your-api-key
-LLM_MODEL=openai/gpt-4.1-mini
+# LLM Provider (multi-provider support)
+LLM_PROVIDER=openrouter     # openrouter, ollama, zai, openai
+LLM_MODEL=                  # Empty = provider default model
+LLM_API_KEY=your-api-key   # Not required for ollama
 
 # Newsletter Topics
 NEWSLETTER_TOPICS=AI news,Machine Learning,Tech startups
@@ -170,6 +173,15 @@ NEWSLETTER_TOPICS=AI news,Machine Learning,Tech startups
 SENDER_EMAIL=your-email@gmail.com
 RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 ```
+
+### Available LLM Providers
+
+| Provider | Base URL | Default Model | API Key Required |
+|---|---|---|---|
+| `openrouter` | `https://openrouter.ai/api/v1` | `openai/gpt-4.1-mini` | Yes |
+| `ollama` | `http://localhost:11434/v1` | `llama3.2` | No |
+| `zai` | `https://api.z.ai/v1` | `zephyr` | Yes |
+| `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` | Yes |
 
 ## API Endpoints
 
@@ -202,6 +214,12 @@ RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 - `GET /tools` - List all registered tools
 - `GET /tools/{name}` - Get tool details
 - `POST /tools/execute` - Execute a tool
+
+### LLM Providers
+- `GET /llm/providers` - List all available providers and current config
+- `GET /llm/providers/{name}` - Get provider details
+- `GET /llm/providers/{name}/health` - Check provider reachability
+- `POST /llm/providers/switch` - Switch provider (runtime, update .env to persist)
 
 ## Development
 

@@ -100,7 +100,7 @@ class SessionManager:
             user_id=user_id,
             created_at=datetime.now(),
             updated_at=datetime.now(),
-            metadata=metadata or {},
+            meta_data=metadata or {},
         )
 
         # Store in database
@@ -112,7 +112,7 @@ class SessionManager:
             preferences=session.preferences,
             topics=session.topics,
             seen_article_ids=session.seen_article_ids,
-            metadata=session.metadata,
+            meta_data=session.metadata,
             is_active=session.is_active,
         )
 
@@ -304,6 +304,6 @@ class SessionManager:
             preferences=db_session.preferences or {},
             topics=db_session.topics or [],
             seen_article_ids=db_session.seen_article_ids or [],
-            metadata=db_session.metadata or {},
+            meta_data=db_session.meta_data or {},
             is_active=db_session.is_active,
         )

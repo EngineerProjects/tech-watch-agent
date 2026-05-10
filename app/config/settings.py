@@ -23,9 +23,10 @@ class Settings:
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch"
     database_sync_url: str = "postgresql://postgres:postgres@localhost:5432/techwatch"
 
+    llm_provider: str = "openrouter"
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_api_key: str = ""
-    llm_model: str = "openai/gpt-4.1-mini"
+    llm_model: str = ""
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
 
@@ -79,9 +80,10 @@ class Settings:
                 "DATABASE_SYNC_URL",
                 "postgresql://postgres:postgres@localhost:5432/techwatch",
             ),
-            llm_base_url=os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
+            llm_provider=os.getenv("LLM_PROVIDER", "openrouter"),
+            llm_base_url=os.getenv("LLM_BASE_URL", ""),
             llm_api_key=os.getenv("LLM_API_KEY", ""),
-            llm_model=os.getenv("LLM_MODEL", "openai/gpt-4.1-mini"),
+            llm_model=os.getenv("LLM_MODEL", ""),
             llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
             llm_max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000")),
             newsletter_title=os.getenv("NEWSLETTER_TITLE", "Tech Watch Agent"),

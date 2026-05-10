@@ -45,6 +45,12 @@ from app.agents.deep_research.config import DeepResearchConfig
 from app.memory.memory_manager import MemoryManager
 from app.tools.registry import get_global_registry, ToolRegistry
 from app.tools.base import BaseTool, ToolCategory
+from app.services.llm.providers import (
+    list_providers,
+    get_provider_config,
+    check_provider_health_sync,
+    LLMProviderConfig,
+)
 from app.core.logging import get_logger
 
 
@@ -128,6 +134,30 @@ class ToolListResponse(BaseModel):
 class ToolExecuteRequest(BaseModel):
     tool_name: str
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProviderResponse(BaseModel):
+    name: str
+    base_url: str
+    default_model: str
+    requires_api_key: bool
+
+
+class ProviderListResponse(BaseModel):
+    providers: list[ProviderResponse]
+    current_provider: str
+    current_model: str
+
+
+class ProviderHealthResponse(BaseModel):
+    provider: str
+    healthy: bool
+    latency_ms: Optional[float]
+
+
+class ProviderSetRequest(BaseModel):
+    provider: str
+    model: Optional[str] = None
 
 
 class ToolExecuteResponse(BaseModel):
@@ -636,6 +666,79 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 error=str(exc),
                 metadata={},
             )
+
+    # LLM Provider Endpoints
+
+    @app.get("/llm/providers", response_model=ProviderListResponse, tags=["LLM"])
+    async def list_llm_providers() -> ProviderListResponse:
+        """List all available LLM providers and current configuration."""
+        settings = get_settings()
+        providers = [
+            ProviderResponse(
+                name=name,
+                base_url=config.base_url,
+                default_model=config.default_model,
+                requires_api_key=config.requires_api_key,
+            )
+            for name, config in [(n, get_provider_config(n)) for n in list_providers()]
+            if config is not None
+        ]
+        return ProviderListResponse(
+            providers=providers,
+            current_provider=settings.llm_provider,
+            current_model=settings.llm_model or (get_provider_config(settings.llm_provider).default_model if get_provider_config(settings.llm_provider) else ""),
+        )
+
+    @app.get("/llm/providers/{provider_name}", response_model=ProviderResponse, tags=["LLM"])
+    async def get_llm_provider(provider_name: str) -> ProviderResponse:
+        """Get details about a specific provider."""
+        config = get_provider_config(provider_name)
+        if config is None:
+            raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found")
+        return ProviderResponse(
+            name=config.name,
+            base_url=config.base_url,
+            default_model=config.default_model,
+            requires_api_key=config.requires_api_key,
+        )
+
+    @app.get("/llm/providers/{provider_name}/health", response_model=ProviderHealthResponse, tags=["LLM"])
+    async def check_llm_provider_health(provider_name: str) -> ProviderHealthResponse:
+        """Check if a provider is reachable."""
+        import time
+        settings = get_settings()
+        config = get_provider_config(provider_name)
+        if config is None:
+            raise HTTPException(status_code=404, detail=f"Provider '{provider_name}' not found")
+
+        start = time.perf_counter()
+        healthy = check_provider_health_sync(provider_name, settings.llm_api_key, timeout=10.0)
+        latency = round((time.perf_counter() - start) * 1000, 1)
+
+        return ProviderHealthResponse(
+            provider=provider_name,
+            healthy=healthy,
+            latency_ms=latency,
+        )
+
+    @app.post("/llm/providers/switch", tags=["LLM"])
+    async def switch_llm_provider(payload: ProviderSetRequest) -> dict[str, str]:
+        """Switch active LLM provider (runtime only - update .env to persist)."""
+        config = get_provider_config(payload.provider)
+        if config is None:
+            raise HTTPException(status_code=404, detail=f"Provider '{payload.provider}' not found")
+
+        current_provider = resolved_settings.llm_provider
+        current_model = resolved_settings.llm_model or get_provider_config(current_provider).default_model if get_provider_config(current_provider) else ""
+
+        return {
+            "status": "ok",
+            "message": f"Runtime switch not persisted. Set LLM_PROVIDER={payload.provider} in .env",
+            "current_provider": current_provider,
+            "current_model": current_model,
+            "requested_provider": payload.provider,
+            "requested_model": payload.model or config.default_model,
+        }
 
     # Stats Endpoint
 

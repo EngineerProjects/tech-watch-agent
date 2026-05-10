@@ -21,7 +21,7 @@ import uuid
 
 from sqlalchemy import select, text, and_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.dialects.postgresql import ARRAY, Float
+from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.config.settings import Settings, get_settings
 from app.core.logging import get_logger

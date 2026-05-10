@@ -1,11 +1,24 @@
+"""
+LLM service for chat completions.
+
+Provides a unified interface for interacting with OpenAI-compatible
+LLM APIs across multiple providers (OpenRouter, Ollama, Z.ai, OpenAI).
+"""
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
 from app.config.settings import Settings, get_settings
 from app.core.logging import get_logger
+from app.services.llm.providers import (
+    LLMProviders,
+    get_provider_config,
+    list_providers,
+    check_provider_health_sync,
+)
 
 
 logger = get_logger(__name__)
@@ -18,14 +31,28 @@ class ChatCompletionClient:
         http_client: httpx.Client | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.base_url = self.settings.llm_base_url.rstrip("/")
-        self.default_model = self.settings.llm_model
+        self._provider_name = self.settings.llm_provider
+        self._provider_config = get_provider_config(self._provider_name)
+        if self._provider_config is None:
+            raise ValueError(f"Unknown LLM provider: {self._provider_name}")
+
+        self.base_url = self._provider_config.base_url
+        self.default_model = self.settings.llm_model or self._provider_config.default_model
         self.default_temperature = self.settings.llm_temperature
         self.default_max_tokens = self.settings.llm_max_tokens
+        self._api_key = self.settings.llm_api_key
         self._http_client = http_client
 
-        if not self.settings.has_llm_credentials:
-            raise ValueError("LLM_API_KEY is not configured")
+        if self._provider_config.requires_api_key and not self._api_key:
+            raise ValueError(f"LLM provider '{self._provider_name}' requires API key")
+
+    @property
+    def provider_name(self) -> str:
+        return self._provider_name
+
+    @property
+    def available_models(self) -> list[str]:
+        return list_providers()
 
     def generate_completion(
         self,
@@ -36,8 +63,6 @@ class ChatCompletionClient:
         max_tokens: int | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> str:
-        # The payload intentionally mirrors the OpenAI-compatible chat API so
-        # we can swap providers later without changing agent code.
         payload = {
             "model": model or self.default_model,
             "messages": self._build_messages(prompt, system_message),
@@ -48,9 +73,12 @@ class ChatCompletionClient:
         }
 
         headers = {
-            "Authorization": f"Bearer {self.settings.llm_api_key}",
             "Content-Type": "application/json",
         }
+        if self._provider_config.auth_type.value == "bearer":
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        elif self._provider_config.auth_type.value == "api_key":
+            headers["X-API-Key"] = self._api_key
         if extra_headers:
             headers.update(extra_headers)
 
@@ -92,3 +120,6 @@ class ChatCompletionClient:
         message = choices[0].get("message", {})
         content = message.get("content", "")
         return content.strip() if isinstance(content, str) else ""
+
+    def health_check(self) -> bool:
+        return check_provider_health_sync(self._provider_name, self._api_key)

@@ -20,7 +20,7 @@ from app.tools.base import BaseTool, ToolResult, ToolMetadata, ToolCategory
 from app.tools.registry import ToolRegistry, get_global_registry, register_tool
 
 # Social media monitoring tools
-from app.tools.social import GitHubTool, RedditTool, ArXivTool, RSSTool, YouTubeTool
+from app.tools.social import GitHubTool, RedditTool, ArXivTool, RSSTool, YouTubeTool, ResearchPaperTool
 
 __all__ = [
     # Core
@@ -37,4 +37,5 @@ __all__ = [
     "ArXivTool",
     "RSSTool",
     "YouTubeTool",
+    "ResearchPaperTool",
 ]
