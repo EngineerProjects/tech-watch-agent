@@ -209,7 +209,7 @@ class DeepResearchNodes:
             logger.warning("Content extraction failed for %s: %s", url, exc)
         return None
 
-    def _generate_completion(
+    async def _generate_completion(
         self,
         prompt: str,
         system_message: Optional[str] = None,
@@ -227,7 +227,7 @@ class DeepResearchNodes:
         Returns:
             Generated text
         """
-        return self.llm_client.generate_completion(
+        return await self.llm_client.async_generate_completion(
             prompt=prompt,
             system_message=system_message,
             temperature=temperature,
@@ -266,7 +266,7 @@ class DeepResearchNodes:
         )
 
         # Generate clarification analysis
-        response_text = self._generate_completion(
+        response_text = await self._generate_completion(
             prompt=prompt,
             temperature=0.3,
             max_tokens=500,
@@ -327,7 +327,7 @@ class DeepResearchNodes:
         )
 
         # Generate research brief
-        research_brief = self._generate_completion(
+        research_brief = await self._generate_completion(
             prompt=prompt,
             temperature=0.3,
             max_tokens=1000,
@@ -399,7 +399,7 @@ Be decisive and efficient. Don't over-research.
 """
 
         # Generate supervisor response
-        response = self._generate_completion(
+        response = await self._generate_completion(
             prompt=prompt,
             system_message=LEAD_RESEARCHER_PROMPT.format(
                 date=get_today_str(),
@@ -598,7 +598,7 @@ Be decisive and efficient. Don't over-research.
             messages_text = get_buffer_string(researcher_state["researcher_messages"])
 
             # LLM decides what to search next
-            response = self._generate_completion(
+            response = await self._generate_completion(
                 prompt=f"""Research topic: {research_topic}
 
 Current conversation:
@@ -686,14 +686,14 @@ Keep search queries focused and specific for best results.""",
                 break
 
         # Compress research results
-        compressed = self._compress_research(researcher_state)
+        compressed = await self._compress_research(researcher_state)
 
         return {
             "compressed_research": compressed,
             "raw_notes": [get_buffer_string(researcher_state["researcher_messages"])],
         }
 
-    def _compress_research(self, researcher_state: ResearcherState) -> str:
+    async def _compress_research(self, researcher_state: ResearcherState) -> str:
         """Compress research findings into a summary.
 
         Args:
@@ -713,7 +713,7 @@ Messages to compress:
 {messages_text}
 """
 
-        return self._generate_completion(
+        return await self._generate_completion(
             prompt=prompt,
             system_message=COMPRESS_RESEARCH_SYSTEM_PROMPT.format(date=get_today_str()),
             temperature=0.3,
@@ -775,7 +775,7 @@ Messages to compress:
             date=get_today_str(),
         )
 
-        final_report = self._generate_completion(
+        final_report = await self._generate_completion(
             prompt=prompt,
             temperature=0.4,
             max_tokens=self.config.final_report_model_max_tokens,

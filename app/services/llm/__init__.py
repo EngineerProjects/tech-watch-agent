@@ -42,6 +42,9 @@ class ChatCompletionClient:
         self.default_max_tokens = self.settings.llm_max_tokens
         self._api_key = self.settings.llm_api_key
         self._http_client = http_client
+        # Fallback model chain for when the primary model is rate-limited.
+        # Models are tried left-to-right before giving up entirely.
+        self._fallback_models: list[str] = list(self.settings.llm_fallback_models)
 
         if self._provider_config.requires_api_key and not self._api_key:
             raise ValueError(f"LLM provider '{self._provider_name}' requires API key")
@@ -54,6 +57,120 @@ class ChatCompletionClient:
     def available_models(self) -> list[str]:
         return list_providers()
 
+    async def async_generate_completion(
+        self,
+        prompt: str,
+        system_message: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra_headers: dict[str, str] | None = None,
+        max_retries: int = 5,
+        initial_delay: float = 2.0,
+    ) -> str:
+        """Generate a completion with exponential backoff + model fallback chain.
+
+        On 429 (rate limit) errors the client will:
+        1. Retry the current model with exponential backoff (max_retries times).
+        2. If still failing, rotate to the next model in llm_fallback_models.
+        3. Return empty string only when all models and retries are exhausted.
+        """
+        import asyncio
+
+        # Build the ordered list of models to try: primary → fallbacks
+        models_to_try = [model or self.default_model] + self._fallback_models
+
+        for model_candidate in models_to_try:
+            last_error: Exception | None = None
+            for attempt in range(max_retries):
+                try:
+                    result = await self._async_make_request(
+                        prompt=prompt,
+                        system_message=system_message,
+                        model=model_candidate,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        extra_headers=extra_headers,
+                    )
+                    if model_candidate != (model or self.default_model):
+                        logger.info("Succeeded with fallback model: %s", model_candidate)
+                    return result
+                except httpx.HTTPStatusError as exc:
+                    last_error = exc
+                    if exc.response.status_code == 429:
+                        delay = initial_delay * (2 ** attempt)
+                        logger.warning(
+                            "[%s] Rate limited (attempt %d/%d). Retrying in %.1fs...",
+                            model_candidate, attempt + 1, max_retries, delay,
+                        )
+                        await asyncio.sleep(delay)
+                    elif exc.response.status_code >= 500:
+                        delay = initial_delay * (2 ** attempt)
+                        logger.warning(
+                            "[%s] Server error %d (attempt %d/%d). Retrying in %.1fs...",
+                            model_candidate, exc.response.status_code,
+                            attempt + 1, max_retries, delay,
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error("[%s] LLM client error (no retry): %s", model_candidate, exc)
+                        return ""
+                except httpx.HTTPError as exc:
+                    logger.error("[%s] LLM network error: %s", model_candidate, exc)
+                    return ""
+
+            # All retries exhausted for this model → try next fallback
+            logger.warning(
+                "[%s] All %d retries exhausted. Trying next fallback model...",
+                model_candidate, max_retries,
+            )
+
+        logger.error(
+            "All models exhausted. Primary: %s, Fallbacks: %s",
+            model or self.default_model,
+            self._fallback_models,
+        )
+        return ""
+
+    async def _async_make_request(
+        self,
+        prompt: str,
+        system_message: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> str:
+        payload = {
+            "model": model or self.default_model,
+            "messages": self._build_messages(prompt, system_message),
+            "temperature": temperature
+            if temperature is not None
+            else self.default_temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self._provider_config.auth_type.value == "bearer":
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        elif self._provider_config.auth_type.value == "api_key":
+            headers["X-API-Key"] = self._api_key
+        if extra_headers:
+            headers.update(extra_headers)
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        return self._extract_content(data)
+
     def generate_completion(
         self,
         prompt: str,
@@ -62,8 +179,8 @@ class ChatCompletionClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         extra_headers: dict[str, str] | None = None,
-        max_retries: int = 3,
-        initial_delay: float = 1.0,
+        max_retries: int = 5,
+        initial_delay: float = 2.0,
     ) -> str:
         import time
 

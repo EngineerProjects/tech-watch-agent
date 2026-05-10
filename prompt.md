@@ -170,4 +170,6 @@ Agis comme si tu participais réellement au développement du projet.
 
 ---
 
-lis et comprends mon code, actuellement, je veux tester le workflow complet de deepsearch avec /home/amiche/Projects/tech-watch-agent/.env si besoin pour nous assurer que ça fonctionne normalement d'abord avant de l'intégrer à l'orchestrateur.
+lis et comprends mon code, je veux tester le workflow complet de deepsearch avec /home/amiche/Projects/tech-watch-agent/.env si besoin pour nous assurer que ça fonctionne normalement d'abord avant de l'intégrer à l'orchestrateur.
+
+Je suis actuellement entrain de tester ceci /home/amiche/Projects/tech-watch-agent/tests/test_deep_research.py avec un vrai modèle.
