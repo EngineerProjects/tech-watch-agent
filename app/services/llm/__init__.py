@@ -67,13 +67,13 @@ class ChatCompletionClient:
         extra_headers: dict[str, str] | None = None,
         max_retries: int = 5,
         initial_delay: float = 2.0,
-    ) -> str:
+        response_model: type[BaseModel] | None = None,
+    ) -> Any:
         """Generate a completion with exponential backoff + model fallback chain.
-
-        On 429 (rate limit) errors the client will:
-        1. Retry the current model with exponential backoff (max_retries times).
-        2. If still failing, rotate to the next model in llm_fallback_models.
-        3. Return empty string only when all models and retries are exhausted.
+        
+        Args:
+            ...
+            response_model: Optional Pydantic model for structured output
         """
         import asyncio
 
@@ -81,7 +81,6 @@ class ChatCompletionClient:
         models_to_try = [model or self.default_model] + self._fallback_models
 
         for model_candidate in models_to_try:
-            last_error: Exception | None = None
             for attempt in range(max_retries):
                 try:
                     result = await self._async_make_request(
@@ -91,12 +90,12 @@ class ChatCompletionClient:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         extra_headers=extra_headers,
+                        response_model=response_model,
                     )
                     if model_candidate != (model or self.default_model):
                         logger.info("Succeeded with fallback model: %s", model_candidate)
                     return result
                 except httpx.HTTPStatusError as exc:
-                    last_error = exc
                     if exc.response.status_code == 429:
                         delay = initial_delay * (2 ** attempt)
                         logger.warning(
@@ -114,12 +113,11 @@ class ChatCompletionClient:
                         await asyncio.sleep(delay)
                     else:
                         logger.error("[%s] LLM client error (no retry): %s", model_candidate, exc)
-                        return ""
+                        return None if response_model else ""
                 except httpx.HTTPError as exc:
                     logger.error("[%s] LLM network error: %s", model_candidate, exc)
-                    return ""
+                    return None if response_model else ""
 
-            # All retries exhausted for this model → try next fallback
             logger.warning(
                 "[%s] All %d retries exhausted. Trying next fallback model...",
                 model_candidate, max_retries,
@@ -130,7 +128,7 @@ class ChatCompletionClient:
             model or self.default_model,
             self._fallback_models,
         )
-        return ""
+        return None if response_model else ""
 
     async def _async_make_request(
         self,
@@ -140,7 +138,8 @@ class ChatCompletionClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         extra_headers: dict[str, str] | None = None,
-    ) -> str:
+        response_model: type[BaseModel] | None = None,
+    ) -> Any:
         payload = {
             "model": model or self.default_model,
             "messages": self._build_messages(prompt, system_message),
@@ -149,6 +148,24 @@ class ChatCompletionClient:
             else self.default_temperature,
             "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
         }
+
+        # Handle structured output for providers that support it (OpenRouter, OpenAI)
+        if response_model and self._provider_name in [LLMProviders.OPENROUTER, LLMProviders.OPENAI]:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_model.__name__,
+                    "strict": True,
+                    "schema": response_model.model_json_schema(),
+                }
+            }
+        elif response_model:
+            # For Ollama/others, we append format instruction to prompt
+            schema_json = response_model.model_json_schema()
+            payload["messages"][-1]["content"] += f"\n\nReturn ONLY a JSON object matching this schema: {schema_json}"
+            # Some providers like Ollama support a simple "json" format
+            if self._provider_name == LLMProviders.OLLAMA:
+                payload["format"] = "json"
 
         headers = {
             "Content-Type": "application/json",
@@ -169,7 +186,22 @@ class ChatCompletionClient:
             response.raise_for_status()
             data = response.json()
 
-        return self._extract_content(data)
+        content = self._extract_content(data)
+        
+        if response_model:
+            import json
+            try:
+                # Clean content if it contains markdown code blocks
+                if content.startswith("```"):
+                    content = content.split("```")[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+                return response_model.model_validate_json(content)
+            except Exception as exc:
+                logger.error("Failed to parse structured output: %s. Content: %s", exc, content)
+                raise ValueError(f"Invalid structured output: {exc}")
+
+        return content
 
     def generate_completion(
         self,

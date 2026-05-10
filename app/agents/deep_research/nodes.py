@@ -25,6 +25,7 @@ from langchain_core.messages import (
     get_buffer_string,
 )
 
+from pydantic import BaseModel, Field
 from app.agents.deep_research.config import DeepResearchConfig
 from app.agents.deep_research.state import (
     DeepResearchAgentState,
@@ -215,7 +216,8 @@ class DeepResearchNodes:
         system_message: Optional[str] = None,
         temperature: float = 0.3,
         max_tokens: int = 2000,
-    ) -> str:
+        response_model: Optional[Any] = None,
+    ) -> Any:
         """Generate a completion using the LLM client.
 
         Args:
@@ -223,15 +225,17 @@ class DeepResearchNodes:
             system_message: Optional system message
             temperature: Sampling temperature
             max_tokens: Maximum tokens
+            response_model: Optional Pydantic model for structured output
 
         Returns:
-            Generated text
+            Generated text or Pydantic model instance
         """
         return await self.llm_client.async_generate_completion(
             prompt=prompt,
             system_message=system_message,
             temperature=temperature,
             max_tokens=max_tokens,
+            response_model=response_model,
         )
 
     async def clarify_with_user(
@@ -239,21 +243,9 @@ class DeepResearchNodes:
         state: DeepResearchAgentState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Analyze user messages and ask clarifying questions if needed.
-
-        This node checks whether the research request is clear enough
-        to proceed, or if clarification is needed from the user.
-
-        Args:
-            state: Current agent state
-            config: Optional runnable config
-
-        Returns:
-            Command dict for routing
-        """
+        """Analyze user messages and ask clarifying questions if needed."""
         from langgraph.types import Command
 
-        # Check if clarification is enabled
         if not self.config.allow_clarification:
             return Command(goto="write_research_brief")
 
@@ -265,38 +257,27 @@ class DeepResearchNodes:
             date=get_today_str(),
         )
 
-        # Generate clarification analysis
-        response_text = await self._generate_completion(
+        # Generate structured clarification analysis
+        response: ClarifyWithUser = await self._generate_completion(
             prompt=prompt,
-            temperature=0.3,
-            max_tokens=500,
+            temperature=0.2,
+            max_tokens=1000,
+            response_model=ClarifyWithUser,
         )
 
-        # Parse JSON response (simplified - in production use proper parsing)
-        try:
-            import json
-            response = json.loads(response_text)
-            need_clarification = response.get("need_clarification", False)
-            question = response.get("question", "")
-            verification = response.get("verification", "")
-        except (json.JSONDecodeError, AttributeError):
-            need_clarification = False
-            question = ""
-            verification = "Proceeding with research based on provided information."
+        if not response:
+            logger.warning("Failed to get structured clarification response. Proceeding.")
+            return Command(goto="write_research_brief")
 
-        if need_clarification:
+        if response.need_clarification:
             return Command(
                 goto="__end__",
-                update={
-                    "messages": [AIMessage(content=question)],
-                },
+                update={"messages": [AIMessage(content=response.question)]},
             )
         else:
             return Command(
                 goto="write_research_brief",
-                update={
-                    "messages": [AIMessage(content=verification)],
-                },
+                update={"messages": [AIMessage(content=response.verification)]},
             )
 
     async def write_research_brief(
@@ -304,18 +285,7 @@ class DeepResearchNodes:
         state: DeepResearchAgentState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Transform user messages into a structured research brief.
-
-        This node analyzes the user's request and generates a focused
-        research brief that will guide the supervisor.
-
-        Args:
-            state: Current agent state
-            config: Optional runnable config
-
-        Returns:
-            Command dict for routing
-        """
+        """Transform user messages into a structured research brief."""
         from langgraph.types import Command
 
         messages = state.get("messages", [])
@@ -326,14 +296,16 @@ class DeepResearchNodes:
             date=get_today_str(),
         )
 
-        # Generate research brief
-        research_brief = await self._generate_completion(
+        # Generate structured research brief
+        response: ResearchQuestion = await self._generate_completion(
             prompt=prompt,
             temperature=0.3,
-            max_tokens=1000,
+            max_tokens=1500,
+            response_model=ResearchQuestion,
         )
 
-        # Create supervisor system prompt
+        research_brief = response.research_brief if response else messages_text
+
         supervisor_system_prompt = LEAD_RESEARCHER_PROMPT.format(
             date=get_today_str(),
             max_researcher_iterations=self.config.max_researcher_iterations,
@@ -359,24 +331,17 @@ class DeepResearchNodes:
         state: SupervisorState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Lead research supervisor that plans and delegates research.
-
-        The supervisor analyzes the research brief and decides how to
-        break down the research into manageable tasks. It delegates
-        to sub-researchers via the ConductResearch tool.
-
-        Args:
-            state: Current supervisor state
-            config: Optional runnable config
-
-        Returns:
-            Command dict for routing
-        """
+        """Lead research supervisor that plans and delegates research."""
         from langgraph.types import Command
 
-        supervisor_messages = state.get("supervisor_messages", [])
+        research_iterations = state.get("research_iterations", 0)
+        
+        # Check iteration limit early
+        if research_iterations >= self.config.max_researcher_iterations:
+            logger.info("Max research iterations reached (%d). Stopping.", research_iterations)
+            return Command(goto="__end__")
 
-        # Create prompt for supervisor decision-making
+        supervisor_messages = state.get("supervisor_messages", [])
         messages_text = "\n".join([
             f"{type(m).__name__}: {m.content if hasattr(m, 'content') else str(m)}"
             for m in supervisor_messages
@@ -384,22 +349,29 @@ class DeepResearchNodes:
 
         prompt = f"""Based on the research brief and current progress, decide your next action.
 
-Current supervisor messages:
-{messages_text}
-
 Research Brief:
 {state.get('research_brief', '')}
 
-Consider:
-1. Should I delegate more research (ConductResearch)?
-2. Have I gathered enough information (ResearchComplete)?
-3. Should I think more about my strategy (think_tool)?
+Current Progress Summary:
+{messages_text[-4000:] if len(messages_text) > 4000 else messages_text}
 
-Be decisive and efficient. Don't over-research.
-"""
+You MUST decide to either:
+1. Conduct more research on specific sub-topics (ConductResearch).
+2. Conclude that research is complete (ResearchComplete).
 
-        # Generate supervisor response
-        response = await self._generate_completion(
+Be decisive and efficient."""
+
+        # Use a union-like logic by trying to get one of the two models
+        # For simplicity in this implementation, we'll use a combined prompt or tool-like behavior
+        # Here we'll try to get ConductResearch or ResearchComplete
+        # A better way in LangGraph is to use bind_tools, but we are simulating it with response_model
+        
+        class SupervisorDecision(BaseModel):
+            action: str = Field(description="Action to take: 'research' or 'complete'")
+            topics: list[str] = Field(default_factory=list, description="Sub-topics for 'research' action. Max 3.")
+            reason: str = Field(description="Reason for this decision")
+
+        decision: SupervisorDecision = await self._generate_completion(
             prompt=prompt,
             system_message=LEAD_RESEARCHER_PROMPT.format(
                 date=get_today_str(),
@@ -407,49 +379,23 @@ Be decisive and efficient. Don't over-research.
                 max_concurrent_research_units=self.config.max_concurrent_research_units,
             ),
             temperature=0.4,
-            max_tokens=500,
+            max_tokens=800,
+            response_model=SupervisorDecision,
         )
 
-        # Determine routing based on response
-        research_iterations = state.get("research_iterations", 0)
+        if not decision:
+            logger.warning("Supervisor failed to make a structured decision. Stopping.")
+            return Command(goto="__end__")
 
-        # Handle empty response (rate limiting or errors)
-        if not response or len(response.strip()) < 10:
-            logger.warning("Supervisor received empty response (likely rate limited). Stopping research.")
-            return Command(
-                goto="__end__",
-                update={
-                    "notes": state.get("notes", []),
-                    "raw_notes": state.get("raw_notes", []),
-                },
-            )
-
-        # Check for completion signals
-        if any(x in response.lower() for x in ["research is complete", "sufficient", "enough information", "complete"]):
-            return Command(
-                goto="__end__",
-                update={
-                    "notes": state.get("notes", []),
-                    "raw_notes": state.get("raw_notes", []),
-                },
-            )
-
-        # Check iteration limit
-        if research_iterations >= self.config.max_researcher_iterations:
-            logger.info("Max research iterations reached (%d). Stopping.", research_iterations)
-            return Command(
-                goto="__end__",
-                update={
-                    "notes": state.get("notes", []),
-                    "raw_notes": state.get("raw_notes", []),
-                },
-            )
+        if decision.action == "complete" or not decision.topics:
+            return Command(goto="__end__")
 
         return Command(
             goto="supervisor_tools",
             update={
-                "supervisor_messages": [AIMessage(content=response)],
+                "supervisor_messages": [AIMessage(content=f"Decision: {decision.action}. Reason: {decision.reason}")],
                 "research_iterations": research_iterations + 1,
+                "metadata": {"next_topics": decision.topics} # Temporary storage for tools node
             },
         )
 
@@ -458,64 +404,18 @@ Be decisive and efficient. Don't over-research.
         state: SupervisorState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Execute supervisor tools (research delegation, thinking).
-
-        This node handles the execution of supervisor tool calls,
-        including delegating to research sub-agents.
-
-        Args:
-            state: Current supervisor state
-            config: Optional runnable config
-
-        Returns:
-            Command dict for routing
-        """
+        """Execute supervisor tools (research delegation)."""
         from langgraph.types import Command
 
-        supervisor_messages = state.get("supervisor_messages", [])
-        research_iterations = state.get("research_iterations", 0)
-
-        # Check for empty supervisor message (rate limited LLM)
-        if supervisor_messages:
-            last_msg = supervisor_messages[-1]
-            content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
-            if not content or len(content.strip()) < 10:
-                logger.warning("Supervisor tools received empty message. Exiting research loop.")
-                return Command(
-                    goto="__end__",
-                    update={"notes": state.get("notes", []), "raw_notes": state.get("raw_notes", [])},
-                )
-        else:
-            return Command(
-                goto="__end__",
-                update={"notes": [], "raw_notes": []},
-            )
-
-        most_recent = supervisor_messages[-1]
-        content = most_recent.content if hasattr(most_recent, "content") else str(most_recent)
-
-        # Check for exit conditions
-        if research_iterations >= self.config.max_researcher_iterations:
-            return Command(
-                goto="__end__",
-                update={
-                    "notes": state.get("notes", []),
-                    "raw_notes": state.get("raw_notes", []),
-                },
-            )
-
-        # Look for research topics in the response
-        # (Simplified - in production use structured tool calls)
-        research_topics = self._extract_research_topics(content)
+        research_topics = state.get("metadata", {}).get("next_topics", [])
 
         if research_topics:
-            # Execute research in parallel
+            logger.info("Supervisor delegating research on: %s", research_topics)
             research_results = await self._execute_research_units(
                 research_topics[:self.config.max_concurrent_research_units],
                 state,
             )
 
-            # Update state with research results
             notes = list(state.get("notes", []))
             raw_notes = list(state.get("raw_notes", []))
 
@@ -528,13 +428,13 @@ Be decisive and efficient. Don't over-research.
             return Command(
                 goto="supervisor",
                 update={
-                    "supervisor_messages": [],
+                    "supervisor_messages": [AIMessage(content=f"Completed research on: {', '.join(research_topics)}")],
                     "notes": notes,
                     "raw_notes": raw_notes,
+                    "metadata": {"next_topics": []} # Clear temporary storage
                 },
             )
 
-        # No research topics found, continue supervisor
         return Command(goto="supervisor")
 
     async def _execute_research_units(

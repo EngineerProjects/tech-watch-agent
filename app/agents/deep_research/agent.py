@@ -83,6 +83,26 @@ class DeepResearchAgent(BaseAgent):
         if self._nodes is None:
             self._nodes = DeepResearchNodes(config=self.config)
 
+        # Initialize checkpointer if needed
+        if self._checkpointer is None:
+            try:
+                from langgraph.checkpoint.postgres import PostgresSaver
+                from psycopg_pool import ConnectionPool
+                from app.config.settings import get_settings
+                
+                settings = get_settings()
+                if settings.database_sync_url:
+                    # LangGraph checkpointer needs a sync connection pool
+                    self._pool = ConnectionPool(conninfo=settings.database_sync_url, max_size=10)
+                    self._checkpointer = PostgresSaver(self._pool)
+                    # We need to setup the checkpointer tables
+                    self._checkpointer.setup()
+                    logger.info("Postgres checkpointer configured for Deep Research agent")
+            except ImportError:
+                logger.warning("langgraph-checkpoint-postgres or psycopg_pool not installed. Using memory checkpointer.")
+            except Exception as exc:
+                logger.error("Failed to setup Postgres checkpointer: %s", exc)
+
         if self._workflow is None:
             self._workflow = DeepResearchWorkflow(
                 config=self.config,
@@ -120,10 +140,12 @@ class DeepResearchAgent(BaseAgent):
             query = input_data
             messages = [HumanMessage(content=query)]
             research_brief = None
+            input_metadata = {}
         elif isinstance(input_data, dict):
             query = input_data.get("query", "")
             messages = input_data.get("messages", [HumanMessage(content=query)])
             research_brief = input_data.get("research_brief")
+            input_metadata = input_data.get("metadata", {})
         else:
             return AgentResult.create_error(
                 errors=["Invalid input format. Expected string or dict with 'query' key."],
@@ -134,9 +156,10 @@ class DeepResearchAgent(BaseAgent):
                 errors=["No research query provided"],
             )
 
-        import asyncio
+        # Ensure thread_id for persistence
+        thread_id = input_metadata.get("thread_id", str(uuid.uuid4()))
 
-        logger.info("Starting deep research for query: %s", query[:100])
+        logger.info("Starting deep research for query: %s (thread_id: %s)", query[:100], thread_id)
 
         try:
             # Run the workflow asynchronously
@@ -148,12 +171,13 @@ class DeepResearchAgent(BaseAgent):
                     "notes": [],
                     "raw_notes": [],
                     "final_report": "",
-                    "metadata": {},
+                    "metadata": input_metadata,
                     "errors": [],
                 },
                 config={
                     "recursion_limit": 50,
                     "configurable": {
+                        "thread_id": thread_id,
                         "research_model": self.config.research_model,
                         "compression_model": self.config.compression_model,
                         "final_report_model": self.config.final_report_model,
