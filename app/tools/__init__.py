@@ -10,12 +10,20 @@ Design principles:
 - ToolResult TypedDict for standardized responses
 - Plugin registry for dynamic tool loading
 - Async-first design for concurrent operations
+
+Available tools:
+- Web tools (search, crawl)
+- Social media tools (GitHub, Reddit, ArXiv, RSS)
 """
 
 from app.tools.base import BaseTool, ToolResult, ToolMetadata, ToolCategory
 from app.tools.registry import ToolRegistry, get_global_registry, register_tool
 
+# Social media monitoring tools
+from app.tools.social import GitHubTool, RedditTool, ArXivTool, RSSTool
+
 __all__ = [
+    # Core
     "BaseTool",
     "ToolResult",
     "ToolMetadata",
@@ -23,4 +31,9 @@ __all__ = [
     "ToolRegistry",
     "get_global_registry",
     "register_tool",
+    # Social tools
+    "GitHubTool",
+    "RedditTool",
+    "ArXivTool",
+    "RSSTool",
 ]

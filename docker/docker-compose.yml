@@ -1,12 +1,13 @@
 services:
-  # PostgreSQL database for persistent storage
+  # PostgreSQL database with pgvector extension
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16  # Official image with pgvector
     container_name: tech-watch-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: techwatch
+      POSTGRES_INITDB_ARGS: "-c shared_preload_libraries=vector"
     ports:
       - "5432:5432"
     volumes:
@@ -16,8 +17,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
-  # Redis for caching and task queue (future use)
+  # Redis for caching and task queue
   redis:
     image: redis:7-alpine
     container_name: tech-watch-redis
@@ -30,6 +32,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   # FastAPI application server
   tech-watch-api:
@@ -42,8 +45,12 @@ services:
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
+      DATABASE_SYNC_URL: postgresql://postgres:postgres@postgres:5432/techwatch
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ../logs:/app/logs
@@ -51,7 +58,19 @@ services:
       - ../token.json:/app/token.json
     ports:
       - "8000:8000"
-    command: ["python", "-m", "app.main", "--mode", "api"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: >
+      sh -c "
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting API server...' &&
+        python -m app.main --mode api
+      "
     restart: unless-stopped
 
   # One-time newsletter generation
@@ -72,8 +91,38 @@ services:
       - ../logs:/app/logs
       - ../credentials.json:/app/credentials.json:ro
       - ../token.json:/app/token.json
-    command: ["python", "-m", "app.main", "--mode", "once", "--no-email"]
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        python -m app.main --mode once
+      "
     profiles: ["manual"]
+
+  # Scheduled newsletter generation (runs on schedule)
+  tech-watch-scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: tech-watch-scheduler
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../logs:/app/logs
+      - ../credentials.json:/app/credentials.json:ro
+      - ../token.json:/app/token.json
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        python -m app.main --mode schedule
+      "
+    profiles: ["scheduler"]
+    restart: unless-stopped
 
 volumes:
   postgres_data:
