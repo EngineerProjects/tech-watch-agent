@@ -1,34 +1,47 @@
 # tech-watch-agent
 
-**Advanced Multi-Agent Tech Watch Platform with Deep Research Capabilities**
+**Advanced Multi-Agent Tech Watch Platform with Orchestrator, Deep Research, and Newsletter Generation**
 
-An open-source platform for automated technology monitoring and newsletter generation using AI agents. Built with LangGraph, FastAPI, and PostgreSQL with pgvector for semantic search.
+An open-source platform for automated technology monitoring and comprehensive research report generation using AI agents. Built with LangGraph, FastAPI, and PostgreSQL with pgvector for semantic search.
+
+## Status: MVP Complete
+
+All core capabilities are implemented and functional:
+- ✅ Orchestrator agent with plan-based parallel research pipeline
+- ✅ Deep Research agent with supervisor-researcher pattern
+- ✅ Newsletter agent for automated content generation
+- ✅ Multi-provider LLM support (OpenRouter, Ollama, Z.ai, OpenAI)
+- ✅ 10+ monitoring tools (GitHub, Reddit, ArXiv, RSS, YouTube, Research Papers, Web Search)
+- ✅ Tool plugin system with registry
+- ✅ Vector store with pgvector for semantic similarity
+- ✅ Email delivery via Gmail
+- ✅ REST API with 25+ endpoints
+- ✅ V1 (legacy newsletter) and V2 (orchestrator) execution modes
 
 ## Features
 
-### Core Capabilities
-- **Orchestrator Agent**: Central planner that coordinates research, analysis, and report generation. Uses plan-based execution with parallel tool dispatch.
-- **Newsletter Agent**: Automated newsletter generation from collected articles
-- **Deep Research Agent**: Multi-agent research system with supervisor-researcher pattern
-- **Semantic Search**: Vector-based article similarity and deduplication
-- **Multi-User Support**: User preferences and topic subscriptions
-- **V1/V2 Modes**: Backwards compatible newsletter workflow (V1) or full orchestrator pipeline (V2)
+### Core Agents
+- **Orchestrator Agent** (V2): Central planner that decomposes tasks into execution plans, dispatches research in parallel across multiple tools, collects/validates results, analyzes, synthesizes reports, and delivers via email. Uses LangGraph StateGraph with supervisor pattern.
+- **Deep Research Agent**: Multi-agent supervisor-researcher pattern for in-depth investigations. Supports clarification loops, parallel research units, and citation tracking.
+- **Newsletter Agent** (V1): Automated newsletter generation from collected articles. Linear pipeline: researcher → analyst → opinion_writer → editor.
 
 ### Monitoring Tools
-- **GitHub**: Repository search, trending repos, commit tracking
+- **GitHub**: Repository search, trending repos, commit tracking, issues
 - **Reddit**: Subreddit monitoring, hot/new/top posts, search
-- **ArXiv**: Academic paper discovery, category browsing
-- **RSS/Atom**: Feed aggregation from multiple sources
-- **Web Search**: News article collection and ranking
-- **YouTube**: Video transcript extraction
-- **Research Papers**: PDF download, text extraction, Semantic Scholar search, arXiv integration
+- **ArXiv**: Academic paper discovery, category browsing, author search
+- **RSS/Atom**: Feed aggregation from multiple sources, auto-discovery
+- **Web Search**: News article collection via DuckDuckGo HTML
+- **YouTube**: Video transcript extraction, metadata, search
+- **Research Papers**: PDF download, PyMuPDF text extraction, Semantic Scholar search, arXiv metadata
 
 ### Technical Features
+- **Multi-Provider LLM**: OpenRouter, Ollama, Z.ai, OpenAI with runtime switching and health checks
 - **Async-first**: Full async/await for concurrent operations
-- **Database**: PostgreSQL with SQLAlchemy async ORM
-- **Vector Store**: pgvector for semantic similarity search
-- **Tool Plugin System**: Extensible tool architecture
-- **Health Monitoring**: Comprehensive health checks and metrics
+- **Database**: PostgreSQL with SQLAlchemy async ORM + pgvector
+- **Tool Plugin System**: Extensible registry with category filtering
+- **Skills System**: Reusable skill modules attachable to agents
+- **Memory Layer**: Article store, vector store, session store
+- **Email Delivery**: Gmail OAuth with HTML/text rendering
 
 ## Architecture
 
@@ -51,18 +64,22 @@ An open-source platform for automated technology monitoring and newsletter gener
         ├──────────────────────────────────────────────────────────────────────────────┤
         │                                                                              │
         │   ┌──────────────────────────────────────────────────────────────────────┐   │
-        │   │                           AGENT ENGINE                               │   │
+        │   │                      ORCHESTRATOR AGENT (V2)                         │   │
+        │   │                                                                      │   │
+        │   │  supervisor → planner → dispatcher_parallel → collector              │   │
+        │   │                                    ↓                                 │   │
+        │   │                                validator                             │   │
+        │   │                        (retry loop) ↓                                │   │
+        │   │                           analyzer → synthesizer → emailer           │   │
+        │   └──────────────────────────────────────────────────────────────────────┘   │
+        │                                                                              │
+        │   ┌──────────────────────────────────────────────────────────────────────┐   │
+        │   │                       SPECIALIST AGENTS                              │   │
         │   │                                                                      │   │
         │   │   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │   │
-        │   │   │ Newsletter   │  │ DeepResearch │  │ TrendMonitor │               │   │
-        │   │   │    Agent     │  │    Agent     │  │    Agent     │               │   │
-        │   │   └──────┬───────┘  └──────┬───────┘  └──────┬───────┘               │   │
-        │   │          │                 │                 │                       │   │
-        │   │          └─────────────────┼─────────────────┘                       │   │
-        │   │                            │                                         │   │
-        │   │                   ┌────────▼────────┐                                │   │
-        │   │                   │  Custom Agents  │                                │   │
-        │   │                   └─────────────────┘                                │   │
+        │   │   │ Newsletter   │  │ DeepResearch │  │ DeepResearch │               │   │
+        │   │   │    (V1)      │  │ Supervisor   │  │ Researcher   │               │   │
+        │   │   └──────────────┘  └──────────────┘  └──────────────┘               │   │
         │   │                                                                      │   │
         │   └──────────────────────────────────────────────────────────────────────┘   │
         │                                                                              │
@@ -70,17 +87,22 @@ An open-source platform for automated technology monitoring and newsletter gener
                                             │
                                             ▼
         ┌──────────────────────────────────────────────────────────────────────────────┐
-        │                            TOOL PLUGIN SYSTEM                                │
+        │                         SKILLS & TOOLS LAYER                                 │
         ├──────────────────────────────────────────────────────────────────────────────┤
         │                                                                              │
         │   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐             │
-        │   │ Web Search │  │ GitHub     │  │ Reddit     │  │ ArXiv      │             │
+        │   │ web_fetch  │  │  social_   │  │  research  │  │  analysis  │             │
+        │   │  skill     │  │   monitor  │  │   _paper   │  │   _insights│             │
+        │   └────────────┘  └────────────┘  └────────────┘  └────────────┘             │
+        │                                                                              │
+        │   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐             │
+        │   │Web Search  │  │  GitHub    │  │  Reddit    │  │   ArXiv    │             │
         │   │   Tool     │  │ Watch Tool │  │ Watch Tool │  │ Watch Tool │             │
         │   └────────────┘  └────────────┘  └────────────┘  └────────────┘             │
         │                                                                              │
         │   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐             │
-        │   │ RSS Feed   │  │ YouTube    │  │ HackerNews │  │ Custom     │             │
-        │   │   Tool     │  │ Transcript │  │   Monitor  │  │ Plugins    │             │
+        │   │ RSS Feed   │  │ YouTube    │  │Research    │  │ Custom     │             │
+        │   │   Tool     │  │Transcript  │  │  Papers    │  │ Plugins    │             │
         │   └────────────┘  └────────────┘  └────────────┘  └────────────┘             │
         │                                                                              │
         └──────────────────────────────────────────────────────────────────────────────┘
@@ -91,8 +113,8 @@ An open-source platform for automated technology monitoring and newsletter gener
         ├──────────────────────────────────────────────────────────────────────────────┤
         │                                                                              │
         │   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────────┐   │
-        │   │   Vector Store   │  │  History Store   │  │ Session / User Context   │   │
-        │   │    pgvector      │  │  Articles & Logs │  │        Manager           │   │
+        │   │   Vector Store   │  │  Article Store   │  │ Session / User Context   │   │
+        │   │    pgvector      │  │                  │  │        Manager           │   │
         │   └──────────────────┘  └──────────────────┘  └──────────────────────────┘   │
         │                                                                              │
         └──────────────────────────────────────────────────────────────────────────────┘
@@ -148,10 +170,13 @@ alembic upgrade head
 # Start API server
 python -m app.main --mode api
 
-# Generate newsletter once
+# Run V2 orchestrator (full research pipeline)
 python -m app.main --mode once --no-email
 
-# Run scheduler
+# Run V1 newsletter (legacy)
+python -m app.main --mode once --v1 --no-email
+
+# Run scheduled newsletter generation
 python -m app.main --mode schedule
 ```
 
@@ -161,7 +186,7 @@ Edit `.env` file with your settings:
 
 ```env
 # Database
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/techwatch
 
 # LLM Provider (multi-provider support)
 LLM_PROVIDER=openrouter     # openrouter, ollama, zai, openai
@@ -188,13 +213,16 @@ RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 ## API Endpoints
 
 ### Health & Status
-- `GET /health` - System health check
+- `GET /health` - System health check (database, memory, agents)
 - `GET /status` - System status and statistics
 - `GET /stats` - Detailed statistics
 
-### Newsletter
-- `POST /newsletter/generate` - Generate newsletter (async)
-- `POST /newsletter/generate/sync` - Generate newsletter (sync)
+### Orchestrator (V2 - Main Pipeline)
+- `POST /orchestrator/run` - Run full research pipeline
+- `POST /orchestrator/task` - Run research task with full control
+
+### Newsletter (V1 - Legacy)
+- `POST /newsletter/generate` - Generate newsletter
 - `GET /newsletter/history` - Get generation history
 - `GET /newsletter/stats` - Get newsletter statistics
 
@@ -223,10 +251,6 @@ RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 - `GET /llm/providers/{name}/health` - Check provider reachability
 - `POST /llm/providers/switch` - Switch provider (runtime, update .env to persist)
 
-### Orchestrator
-- `POST /orchestrator/run` - Run full research pipeline (V2 orchestrator)
-- `POST /orchestrator/task` - Run research task with full control
-
 ## Development
 
 ### Project Structure
@@ -235,25 +259,28 @@ RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 app/
 ├── agents/              # AI agent implementations
 │   ├── base/            # Base agent framework
-│   ├── newsletter/       # Newsletter generation agent
+│   ├── orchestrator/    # V2 orchestrator (plan -> research -> report)
+│   ├── newsletter/       # V1 newsletter agent
 │   └── deep_research/   # Deep research agent
 ├── api/                 # FastAPI endpoints
 ├── config/              # Configuration management
 ├── core/                # Core utilities (logging, models)
 ├── db/                  # Database layer
-│   ├── models.py        # SQLAlchemy models
-│   ├── repositories.py  # Data access layer
-│   └── base.py          # Database configuration
-├── delivery/            # Email delivery
+├── delivery/            # Email delivery (Gmail, renderer)
 ├── memory/              # Memory/RAG layer
-├── monitoring/          # Health checks and metrics
-├── prompts/             # Agent prompts
 ├── scheduler/           # Task scheduling
-├── services/            # Business logic services
+├── services/            # Business logic
+│   └── llm/             # Multi-provider LLM
+│       └── providers.py # Provider registry
+├── skills/              # Agent skill modules
+│   ├── base.py         # Base skill interface
+│   ├── registry.py     # Skill registry
+│   └── predefined/      # Predefined skills
 └── tools/               # Tool plugins
     ├── base.py         # Base tool interface
     ├── registry.py     # Tool registry
-    └── social/          # Social media tools
+    ├── web/            # Web tools (search, crawl)
+    └── social/          # Social tools (GitHub, Reddit, etc.)
 
 alembic/                 # Database migrations
 tests/                   # Unit tests
@@ -263,26 +290,16 @@ docker/                  # Docker configuration
 ### Running Tests
 
 ```bash
-# Run all tests
 pytest
-
-# Run with coverage
 pytest --cov=app tests/
-
-# Run specific test file
 pytest tests/test_base_agent.py
 ```
 
 ### Database Migrations
 
 ```bash
-# Create a new migration
 alembic revision --autogenerate -m "description"
-
-# Apply migrations
 alembic upgrade head
-
-# Rollback
 alembic downgrade -1
 ```
 
@@ -307,12 +324,26 @@ class MyTool(BaseTool):
         return ToolCategory.SEARCH
 
     async def execute(self, params: dict) -> ToolResult:
-        # Your tool logic here
         return {"success": True, "data": ..., "error": None, "metadata": {}}
+```
 
-# Register the tool
-from app.tools.registry import register_tool
-register_tool(MyTool())
+### Creating a New Skill
+
+```python
+from app.skills.base import BaseSkill, SkillResult
+
+class WebResearchSkill(BaseSkill):
+    @property
+    def name(self) -> str:
+        return "web_research"
+
+    @property
+    def description(self) -> str:
+        return "Advanced web research with adaptive parsing"
+
+    async def execute(self, params: dict, context: dict) -> SkillResult:
+        # Skill logic with access to tools and LLM
+        return SkillResult(success=True, data=..., message="...")
 ```
 
 ### Creating a New Agent
@@ -322,15 +353,12 @@ from app.agents.base import BaseAgent, AgentConfig, AgentResult
 
 class MyAgent(BaseAgent):
     async def setup(self) -> None:
-        # Initialize agent resources
         pass
 
     async def execute(self, input_data: Any) -> AgentResult:
-        # Agent logic
         return AgentResult.create_success(output=...)
 
     async def cleanup(self) -> None:
-        # Release resources
         pass
 ```
 
@@ -338,27 +366,26 @@ class MyAgent(BaseAgent):
 
 - **Python 3.11+** - Language
 - **FastAPI** - Web framework
-- **LangGraph** - Agent orchestration
+- **LangGraph** - Agent orchestration with StateGraph
 - **SQLAlchemy 2.0** - ORM (async)
-- **PostgreSQL** - Database
-- **pgvector** - Vector similarity search
+- **PostgreSQL** - Database with pgvector
 - **Redis** - Caching and task queue
 - **Alembic** - Database migrations
 - **Docker** - Containerization
 
+## Roadmap (Next Improvements)
+
+- [ ] Scrapling integration for advanced web fetching
+- [ ] Adaptive element tracking for resilient content scraping
+- [ ] Multi-session spider support with proxy rotation
+- [ ] Cloudflare/anti-bot bypass for protected sites
+- [ ] LangGraph checkpointing for long-running sessions
+- [ ] LangSmith observability integration
+- [ ] Celery/Temporal for distributed task queues
+- [ ] Web dashboard for monitoring
+- [ ] Multi-tenant support
+- [ ] Advanced analytics
+
 ## License
 
 MIT License - See LICENSE file for details
-
-## Contributing
-
-Contributions are welcome! Please read the contributing guidelines and submit PRs.
-
-## Roadmap
-
-- [ ] Celery/Temporal integration for task queues
-- [ ] Web dashboard for monitoring
-- [ ] Additional agent types (trends, comparison)
-- [ ] Plugin marketplace
-- [ ] Multi-tenant support
-- [ ] Advanced analytics
