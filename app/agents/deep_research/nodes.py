@@ -79,6 +79,7 @@ class DeepResearchNodes:
         self._tavily_tool = tavily_tool
         self._think_tool = None
         self._content_extractor = None
+        self._web_search_tool = None
 
     @property
     def llm_client(self):
@@ -108,6 +109,90 @@ class DeepResearchNodes:
             from app.tools.web.extractor import ContentExtractorFactory
             self._content_extractor = ContentExtractorFactory.from_settings()
         return self._content_extractor
+
+    def _get_web_search_tool(self) -> Any:
+        """Lazy load web search tool (DuckDuckGo fallback)."""
+        if self._web_search_tool is None:
+            from app.tools.web.search import NewsSearchService
+            self._web_search_tool = NewsSearchService()
+        return self._web_search_tool
+
+    async def _search_with_fallback(self, query: str) -> dict[str, Any]:
+        """Execute search with multi-tool fallback chain.
+
+        Tries tools in order:
+        1. Tavily (best quality, requires API key)
+        2. Web search (DuckDuckGo, free fallback)
+
+        Args:
+            query: Search query
+
+        Returns:
+            Search results dict with 'results' and 'answer' keys
+        """
+        # Try Tavily first
+        tavily = self._get_tavily_tool()
+        if tavily._api_key:
+            try:
+                result = await tavily.execute({"query": query})
+                if result.get("success"):
+                    return result.get("data", {})
+            except Exception as exc:
+                logger.debug("Tavily search failed: %s", exc)
+
+        # Fallback to web search
+        web_search = self._get_web_search_tool()
+        try:
+            urls = await web_search.search_news_urls(query)
+            return {
+                "results": [{"title": "News article", "url": url, "content": ""} for url in urls],
+                "answer": f"Found {len(urls)} news articles for: {query}",
+            }
+        except Exception as exc:
+            logger.debug("Web search failed: %s", exc)
+
+        return {"results": [], "answer": ""}
+
+    async def _extract_content_parallel(self, urls: list[dict]) -> list[dict]:
+        """Extract content from multiple URLs in parallel.
+
+        Args:
+            urls: List of URL dicts with 'url', 'title' keys
+
+        Returns:
+            List of extracted content dicts
+        """
+        if not urls:
+            return []
+
+        extractor = self._get_content_extractor()
+
+        async def extract_single(source: dict) -> dict:
+            url = source.get("url", "")
+            if not url:
+                return {}
+            try:
+                result = await extractor.execute({
+                    "url": url,
+                    "strategy": "markdown",
+                    "output_format": "markdown",
+                })
+                if result.get("success"):
+                    return {
+                        "type": "extracted_content",
+                        "url": url,
+                        "title": source.get("title", ""),
+                        "content": result.get("data", {}).get("content", ""),
+                        "tool_used": result.get("metadata", {}).get("tool_used", "unknown"),
+                    }
+            except Exception as exc:
+                logger.debug("Content extraction failed for %s: %s", url, exc)
+            return {}
+
+        tasks = [extract_single(u) for u in urls[:5]]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        return [r for r in results if isinstance(r, dict) and r.get("content")]
 
     async def _extract_content(self, url: str) -> Optional[str]:
         """Extract clean content from a URL using content_extractor with fallback."""
@@ -504,18 +589,16 @@ Keep search queries focused and specific for best results.""",
             if "RESEARCH_COMPLETE" in response.strip().upper()[:20]:
                 break
 
-            # Execute the actual search
-            tavily = self._get_tavily_tool()
-            search_result = await tavily.execute({"query": response.strip()})
+            # Execute search with fallback chain (Tavily → web_search)
+            search_result = await self._search_with_fallback(response.strip())
 
-            if search_result.get("success"):
-                data = search_result.get("data", {})
-                results_list = data.get("results", [])
-                answer = data.get("answer", "")
+            results_list = search_result.get("results", [])
+            answer = search_result.get("answer", "")
 
+            if results_list or answer:
                 search_summary = f"Search: {response.strip()}\n\n"
                 if answer:
-                    search_summary += f"Tavily Answer: {answer}\n\n"
+                    search_summary += f"AI Answer: {answer}\n\n"
                 if results_list:
                     for r in results_list[:3]:
                         search_summary += f"- [{r.get('title', '')}]({r.get('url', '')}): {r.get('content', '')[:200]}...\n"
@@ -526,21 +609,16 @@ Keep search queries focused and specific for best results.""",
                     "sources": [{"title": r.get("title"), "url": r.get("url")} for r in results_list[:5]],
                 })
 
-                # Extract detailed content from top URLs using content_extractor
-                for source in results_list[:2]:
-                    url = source.get("url", "")
-                    if url:
-                        content_result = await self._extract_content(url)
-                        if content_result:
-                            researcher_state["raw_notes"].append({
-                                "type": "extracted_content",
-                                "url": url,
-                                "title": source.get("title", ""),
-                                "content": content_result,
-                            })
-                            researcher_state["researcher_messages"].append(
-                                AIMessage(content=f"[Content from {url}]\n{content_result[:2000]}...")
-                            )
+                # Extract detailed content from top URLs IN PARALLEL
+                extracted_results = await self._extract_content_parallel(results_list[:3])
+
+                for extracted in extracted_results:
+                    researcher_state["raw_notes"].append(extracted)
+                    content_preview = extracted.get("content", "")[:2000]
+                    tool_used = extracted.get("tool_used", "unknown")
+                    researcher_state["researcher_messages"].append(
+                        AIMessage(content=f"[Content extracted via {tool_used}]\n{content_preview}...")
+                    )
 
                 researcher_state["researcher_messages"].append(
                     AIMessage(content=f"[Search Results]\n{search_summary}")
@@ -548,7 +626,7 @@ Keep search queries focused and specific for best results.""",
                 researcher_state["tool_call_iterations"] += 1
             else:
                 researcher_state["researcher_messages"].append(
-                    AIMessage(content=f"[Search Error] {search_result.get('error', 'Unknown error')}")
+                    AIMessage(content=f"[Search Error] No results found for: {response.strip()}")
                 )
 
             # Use think_tool to reflect on progress and decide next action
