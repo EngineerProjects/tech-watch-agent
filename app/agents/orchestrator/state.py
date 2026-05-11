@@ -21,6 +21,7 @@ class StepStatus(str, Enum):
 
 class StepType(str, Enum):
     RESEARCH = "research"
+    DEEP_RESEARCH = "deep_research"
     ANALYSIS = "analysis"
     SYNTHESIS = "synthesis"
     VALIDATION = "validation"

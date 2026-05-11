@@ -30,14 +30,14 @@ Generate a detailed execution plan. Respond with a JSON list of steps, each with
 - step_id: "step_1", "step_2", etc.
 - name: short descriptive name
 - description: what to do
-- step_type: "research" | "analysis" | "synthesis" | "validation" | "email"
-- tool_name: which tool to use (web_search, reddit, github, arxiv, rss, youtube, research_paper, newsletter, gmail)
+- step_type: "research" | "deep_research" | "analysis" | "synthesis" | "validation" | "email"
+- tool_name: which tool to use (web_search, reddit, github, arxiv, rss, youtube, research_paper, deep_research, newsletter, gmail)
 - params: dict with tool parameters
 
 Example:
 [
-  {{"step_id": "step_1", "name": "Search tech news", "description": "Search for latest AI news", "step_type": "research", "tool_name": "web_search", "params": {{"topic": "AI breakthroughs"}}}},
-  {{"step_id": "step_2", "name": "Monitor Reddit", "description": "Check AI subreddit for discussions", "step_type": "research", "tool_name": "reddit", "params": {{"subreddit": "artificial", "sort": "hot"}}}}
+  {{"step_id": "step_1", "name": "Deep technical analysis", "description": "Conduct deep research on SLM quantization techniques", "step_type": "deep_research", "tool_name": "deep_research", "params": {{"query": "SLM quantization advancements 2026"}}}},
+  {{"step_id": "step_2", "name": "Search tech news", "description": "Search for latest AI news", "step_type": "research", "tool_name": "web_search", "params": {{"topic": "AI breakthroughs"}}}}
 ]
 
 Return ONLY valid JSON (no markdown, no explanation)."""
@@ -47,6 +47,7 @@ PLANNER_SYSTEM = """You are a Planning Agent. Given a research task, create a cl
 Your plan must:
 - Have 3-8 steps maximum
 - Start with research steps (parallel when independent)
+- Use 'deep_research' for complex, technical, or multi-faceted topics that require thorough exploration.
 - End with synthesis and delivery
 - Use the right tools for each step
 - Be specific enough to verify completion
@@ -56,6 +57,7 @@ Output format: JSON list with step objects."""
 PLANNER_USER = """Create an execution plan for this task: {task}
 
 Available tools:
+- deep_research: Comprehensive, multi-step agent for complex technical topics. Use this for the main research goal.
 - web_search: General web search for news and articles
 - reddit: Monitor subreddits (hot, new, top)
 - github: Track repositories (trending, commits, issues)

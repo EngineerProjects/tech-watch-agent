@@ -170,6 +170,4 @@ Agis comme si tu participais réellement au développement du projet.
 
 ---
 
-lis et comprends mon code, je veux tester le workflow complet de deepsearch avec /home/amiche/Projects/tech-watch-agent/.env si besoin pour nous assurer que ça fonctionne normalement d'abord avant de l'intégrer à l'orchestrateur.
-
-Je suis actuellement entrain de tester ceci /home/amiche/Projects/tech-watch-agent/tests/test_deep_research.py avec un vrai modèle.
+Maintenant je suis en entrain d'intégrer deep_research dans l'orchestrateur. et Je le teste maintenant dans tests/test_orchestrator_deep.py

@@ -81,23 +81,29 @@ class OrchestratorNodes:
         self._max_articles = max_articles
         self._min_sources = min_sources
         self._registry = get_global_registry()
+        self._deep_research_agent = None
 
     def _client(self) -> ChatCompletionClient:
         if self._llm_client is None:
             self._llm_client = ChatCompletionClient()
         return self._llm_client
 
+    def _get_deep_research_agent(self):
+        if self._deep_research_agent is None:
+            from app.agents.deep_research.agent import create_deep_research_agent
+            self._deep_research_agent = create_deep_research_agent()
+        return self._deep_research_agent
+
     def _get_tool(self, tool_name: str) -> Optional[Any]:
         tool = self._registry.get(tool_name)
         if tool is None:
             for t in self._registry.list_tools_metadata():
                 if t.name == tool_name:
-                    from app.tools.base import BaseTool
                     pass
             logger.warning("Tool '%s' not found in registry", tool_name)
         return tool
 
-    def supervisor(self, state: OrchestratorState) -> OrchestratorState:
+    async def supervisor(self, state: OrchestratorState) -> OrchestratorState:
         """Entry point. If no plan exists, delegate to planner. Otherwise continue."""
         task = state.get("task", "")
         plan = state.get("plan", [])
@@ -112,10 +118,11 @@ class OrchestratorNodes:
         state["iteration_count"] = state.get("iteration_count", 0) + 1
         return state
 
-    def planner(self, state: OrchestratorState) -> OrchestratorState:
+    async def planner(self, state: OrchestratorState) -> OrchestratorState:
         """Generate execution plan from task using LLM."""
         task = state.get("task", "")
-        topics = state.get("task", "")
+        # Get topics from metadata or use task if not provided
+        topics = state.get("metadata", {}).get("topics", task)
 
         client = self._client()
         prompt = PLANNER_USER.format(
@@ -124,16 +131,29 @@ class OrchestratorNodes:
         )
 
         try:
-            response = client.generate_completion(
+            logger.info("Generating plan for task: %s", task[:100])
+            response = await client.async_generate_completion(
                 prompt=prompt,
-                system_message="You are a Planning Agent. Create structured execution plans.",
+                system_message="You are a Planning Agent. Create structured execution plans. Use 'deep_research' for complex technical topics.",
                 temperature=0.3,
                 max_tokens=3000,
             )
 
+            if not response:
+                raise ValueError("LLM returned empty response for planner")
+
             plan_data = _parse_json_safe(response)
-            if not isinstance(plan_data, list):
-                plan_data = []
+            if not isinstance(plan_data, list) or not plan_data:
+                logger.warning("Planner returned invalid or empty JSON. Falling back to default deep research plan.")
+                plan_data = [
+                    {
+                        "step_id": "step_1",
+                        "name": "Deep Research",
+                        "description": f"Conduct deep research on {task}",
+                        "step_type": "deep_research",
+                        "tool_name": "deep_research"
+                    }
+                ]
 
             plan: list[PlanStep] = []
             for i, step in enumerate(plan_data[:10]):
@@ -159,12 +179,27 @@ class OrchestratorNodes:
             logger.info("Planner generated %d steps", len(plan))
 
         except Exception as exc:
-            logger.error("Planner failed: %s", exc)
+            logger.error("Planner failed: %s. Falling back to single deep research step.", exc)
+            state["plan"] = [
+                PlanStep(
+                    step_id="fallback_step",
+                    name="Deep Research Fallback",
+                    description=f"Direct research on {task}",
+                    step_type=StepType.DEEP_RESEARCH,
+                    status=StepStatus.PENDING,
+                    tool_name="deep_research",
+                    params={},
+                    result=None,
+                    error=None,
+                    started_at=None,
+                    completed_at=None,
+                )
+            ]
             state["errors"] = state.get("errors", []) + [f"Planner error: {exc}"]
 
         return state
 
-    def dispatcher(self, state: OrchestratorState) -> OrchestratorState:
+    async def dispatcher(self, state: OrchestratorState) -> OrchestratorState:
         """Execute the current plan step using the appropriate tool."""
         plan = state.get("plan", [])
         current_idx = state.get("current_step_index", 0)
@@ -183,43 +218,58 @@ class OrchestratorNodes:
         plan[current_idx]["started_at"] = datetime.now().isoformat()
 
         tool_name = step.get("tool_name")
+        step_type = step.get("step_type")
         params = step.get("params", {}) or {}
         step_id = step["step_id"]
 
-        if not tool_name:
-            plan[current_idx]["status"] = StepStatus.SKIPPED
-            plan[current_idx]["error"] = "No tool specified"
-            plan[current_idx]["completed_at"] = datetime.now().isoformat()
-            state["current_step_index"] = current_idx + 1
-            return state
-
         try:
-            tool = self._get_tool(tool_name)
-            if tool is None:
-                raise ValueError(f"Tool '{tool_name}' not found")
-
-            import asyncio
-            result_data: dict[str, Any] = {}
-
-            if hasattr(tool, "execute"):
-                result = asyncio.run(tool.execute(params))
-            elif hasattr(tool, "execute_safe"):
-                result = asyncio.run(tool.execute_safe(params))
+            # Handle Deep Research step type
+            if step_type == StepType.DEEP_RESEARCH:
+                logger.info("Executing DEEP RESEARCH for step %s", step_id)
+                agent = self._get_deep_research_agent()
+                query = step.get("description", params.get("query", state.get("task", "")))
+                result = await agent.execute({"query": query, "metadata": {"parent_task_id": state.get("task_id")}})
+                
+                if result.success:
+                    success = True
+                    data = {"report": result.output.get("report"), "findings": result.output.get("research_results")}
+                    error = None
+                else:
+                    success = False
+                    data = []
+                    error = ", ".join(result.errors)
+            
+            # Normal tool execution
+            elif not tool_name:
+                plan[current_idx]["status"] = StepStatus.SKIPPED
+                plan[current_idx]["error"] = "No tool specified"
+                plan[current_idx]["completed_at"] = datetime.now().isoformat()
+                state["current_step_index"] = current_idx + 1
+                return state
             else:
-                raise ValueError(f"Tool '{tool_name}' has no execute method")
+                tool = self._get_tool(tool_name)
+                if tool is None:
+                    raise ValueError(f"Tool '{tool_name}' not found")
 
-            if isinstance(result, dict):
-                success = result.get("success", False)
-                data = result.get("data", [])
-                error = result.get("error")
-            elif isinstance(result, list):
-                success = True
-                data = result
-                error = None
-            else:
-                success = True
-                data = result
-                error = None
+                if hasattr(tool, "execute"):
+                    result = await tool.execute(params)
+                elif hasattr(tool, "execute_safe"):
+                    result = await tool.execute_safe(params)
+                else:
+                    raise ValueError(f"Tool '{tool_name}' has no execute method")
+
+                if isinstance(result, dict):
+                    success = result.get("success", False)
+                    data = result.get("data", [])
+                    error = result.get("error")
+                elif isinstance(result, list):
+                    success = True
+                    data = result
+                    error = None
+                else:
+                    success = True
+                    data = result
+                    error = None
 
             if success:
                 plan[current_idx]["status"] = StepStatus.DONE
@@ -229,7 +279,7 @@ class OrchestratorNodes:
                 research_results.append({
                     "step_id": step_id,
                     "step_name": step["name"],
-                    "tool": tool_name,
+                    "tool": tool_name or "deep_research",
                     "data": data,
                     "count": len(data) if isinstance(data, list) else 1,
                     "timestamp": datetime.now().isoformat(),
@@ -254,7 +304,7 @@ class OrchestratorNodes:
 
         return state
 
-    def dispatcher_parallel(self, state: OrchestratorState) -> OrchestratorState:
+    async def dispatcher_parallel(self, state: OrchestratorState) -> OrchestratorState:
         """Fan-out dispatcher: launch all pending research steps in parallel."""
         import asyncio
 
@@ -262,25 +312,44 @@ class OrchestratorNodes:
         pending_indices = [
             i for i, step in enumerate(plan)
             if step.get("status") == StepStatus.PENDING
-            and step.get("step_type") in (StepType.RESEARCH,)
+            and step.get("step_type") in (StepType.RESEARCH, StepType.DEEP_RESEARCH)
         ]
 
         if not pending_indices:
-            return self.dispatcher(state)
+            return await self.dispatcher(state)
 
         async def run_step(step: PlanStep, idx: int) -> tuple[int, dict]:
             tool_name = step.get("tool_name")
+            step_type = step.get("step_type")
             params = step.get("params", {}) or {}
             step_id = step["step_id"]
 
-            if not tool_name:
-                return idx, {"success": False, "error": "No tool specified", "step_id": step_id}
-
-            tool = self._get_tool(tool_name)
-            if tool is None:
-                return idx, {"success": False, "error": f"Tool '{tool_name}' not found", "step_id": step_id}
-
             try:
+                # Handle Deep Research step type
+                if step_type == StepType.DEEP_RESEARCH:
+                    logger.info("Executing DEEP RESEARCH for step %s", step_id)
+                    agent = self._get_deep_research_agent()
+                    query = step.get("description", params.get("query", state.get("task", "")))
+                    result = await agent.execute({"query": query, "metadata": {"parent_task_id": state.get("task_id")}})
+                    
+                    if result.success:
+                        return idx, {
+                            "success": True,
+                            "data": {"report": result.output.get("report"), "findings": result.output.get("research_results")},
+                            "step_id": step_id,
+                            "tool": "deep_research_agent",
+                        }
+                    else:
+                        return idx, {"success": False, "error": ", ".join(result.errors), "step_id": step_id, "tool": "deep_research_agent"}
+
+                # Normal tool execution
+                if not tool_name:
+                    return idx, {"success": False, "error": "No tool specified", "step_id": step_id}
+
+                tool = self._get_tool(tool_name)
+                if tool is None:
+                    return idx, {"success": False, "error": f"Tool '{tool_name}' not found", "step_id": step_id}
+
                 if hasattr(tool, "execute"):
                     result = await tool.execute(params)
                 elif hasattr(tool, "execute_safe"):
@@ -298,19 +367,18 @@ class OrchestratorNodes:
                     }
                 return idx, {"success": True, "data": result or [], "step_id": step_id, "tool": tool_name}
             except Exception as exc:
-                return idx, {"success": False, "error": str(exc), "step_id": step_id, "tool": tool_name}
-
-        async def run_all() -> list[tuple[int, dict]]:
-            tasks = [run_step(plan[i], i) for i in pending_indices]
-            return await asyncio.gather(*tasks, return_exceptions=True)
+                logger.error("Error in run_step for %s: %s", step_id, exc)
+                return idx, {"success": False, "error": str(exc), "step_id": step_id, "tool": tool_name if 'tool_name' in locals() else "unknown"}
 
         try:
-            results = asyncio.run(run_all())
+            tasks = [run_step(plan[i], i) for i in pending_indices]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
             research_results = state.get("research_results", [])
             updated_plan = plan[:]
 
             for item in results:
-                if isinstance(item, Exception):
+                if isinstance(item, Exception) or not isinstance(item, tuple):
                     continue
                 idx, result = item
                 if idx >= len(updated_plan):
@@ -346,7 +414,7 @@ class OrchestratorNodes:
 
         return state
 
-    def collector(self, state: OrchestratorState) -> OrchestratorState:
+    async def collector(self, state: OrchestratorState) -> OrchestratorState:
         """Aggregate all research results into a unified corpus."""
         research_results = state.get("research_results", [])
         task = state.get("task", "")
@@ -381,7 +449,7 @@ class OrchestratorNodes:
         prompt = COLLECTOR_USER.format(results=corpus)
 
         try:
-            summary = client.generate_completion(
+            summary = await client.async_generate_completion(
                 prompt=prompt,
                 system_message="You are the Collector Agent. Aggregate research results.",
                 temperature=0.3,
@@ -396,14 +464,14 @@ class OrchestratorNodes:
 
         return state
 
-    def validator(self, state: OrchestratorState) -> OrchestratorState:
+    async def validator(self, state: OrchestratorState) -> OrchestratorState:
         """Validate that collected results meet quality thresholds."""
         research_results = state.get("research_results", [])
         task = state.get("task", "")
 
         article_count = sum(
             r.get("count", 0) for r in research_results
-            if isinstance(r.get("data"), list)
+            if isinstance(r.get("data"), (list, dict))
         )
         source_count = len(research_results)
 
@@ -414,19 +482,20 @@ class OrchestratorNodes:
             validation_errors.append(f"Insufficient sources: {source_count} < 2")
 
         state["validation_errors"] = validation_errors
+        state["iteration_count"] = state.get("iteration_count", 0) + 1
 
         if validation_errors:
             max_iter = state.get("max_iterations", 5)
             iteration = state.get("iteration_count", 0)
             if iteration >= max_iter:
-                logger.warning("Max iterations reached, proceeding despite validation errors")
+                logger.warning("Max iterations reached (%d/%d), proceeding despite validation errors", iteration, max_iter)
             else:
-                logger.info("Validation failed: %s. Will retry.", validation_errors)
+                logger.info("Validation failed (attempt %d/%d): %s. Will retry.", iteration, max_iter, validation_errors)
 
         logger.info("Validator: %d articles from %d sources", article_count, source_count)
         return state
 
-    def analyzer(self, state: OrchestratorState) -> OrchestratorState:
+    async def analyzer(self, state: OrchestratorState) -> OrchestratorState:
         """Extract key insights from the research corpus."""
         research_results = state.get("research_results", [])
         task = state.get("task", "")
@@ -456,7 +525,7 @@ class OrchestratorNodes:
         prompt = ANALYZER_USER.format(task=task, corpus=corpus)
 
         try:
-            analysis = client.generate_completion(
+            analysis = await client.async_generate_completion(
                 prompt=prompt,
                 system_message="You are the Analyst Agent. Extract key insights from research.",
                 temperature=0.4,
@@ -470,7 +539,7 @@ class OrchestratorNodes:
 
         return state
 
-    def synthesizer(self, state: OrchestratorState) -> OrchestratorState:
+    async def synthesizer(self, state: OrchestratorState) -> OrchestratorState:
         """Create the final comprehensive report."""
         research_results = state.get("research_results", [])
         analysis = state.get("analysis_results", "")
@@ -506,7 +575,7 @@ class OrchestratorNodes:
         prompt = SYNTHESIZER_USER.format(task=task, corpus=corpus, analysis=analysis_text)
 
         try:
-            report = client.generate_completion(
+            report = await client.async_generate_completion(
                 prompt=prompt,
                 system_message="You are the Synthesizer Agent. Create comprehensive tech reports.",
                 temperature=0.4,
@@ -522,7 +591,7 @@ class OrchestratorNodes:
 
         return state
 
-    def emailer(self, state: OrchestratorState) -> OrchestratorState:
+    async def emailer(self, state: OrchestratorState) -> OrchestratorState:
         """Send the final report via email."""
         report = state.get("final_report", "")
         task = state.get("task", "")

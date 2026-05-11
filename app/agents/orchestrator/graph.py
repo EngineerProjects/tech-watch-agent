@@ -51,10 +51,21 @@ class OrchestratorGraphBuilder:
 
         workflow.add_edge("supervisor", "planner")
 
+        # After planning, try parallel dispatch first
         workflow.add_edge("planner", "dispatcher_parallel")
 
-        workflow.add_edge("dispatcher", "dispatcher")
+        # dispatcher_parallel handles all pending research steps then goes to collector
         workflow.add_edge("dispatcher_parallel", "collector")
+
+        # dispatcher node handles one step at a time, then decides what to do next
+        workflow.add_conditional_edges(
+            "dispatcher",
+            self._route_after_dispatcher,
+            {
+                "continue": "dispatcher",
+                "collect": "collector",
+            }
+        )
 
         workflow.add_edge("collector", "validator")
 
@@ -72,6 +83,15 @@ class OrchestratorGraphBuilder:
         workflow.add_edge("emailer", END)
 
         return workflow.compile(checkpointer=checkpointer)
+
+    def _route_after_dispatcher(self, state: OrchestratorState) -> Literal["continue", "collect"]:
+        """Route after sequential dispatcher: continue to next step or go to collector."""
+        plan = state.get("plan", [])
+        current_idx = state.get("current_step_index", 0)
+        
+        if current_idx < len(plan):
+            return "continue"
+        return "collect"
 
     def _route_after_validation(self, state: OrchestratorState) -> Literal["retry", "analyze"]:
         errors = state.get("validation_errors", [])
@@ -136,10 +156,34 @@ class OrchestratorWorkflow:
         logger.info("Orchestrator workflow completed")
         return result
 
-    async def run_async(self, task: str, topics: Optional[list[str]] = None) -> OrchestratorState:
-        """Async version of run()."""
-        import asyncio
-        return await asyncio.to_thread(self.run, task, topics)
+    async def run_async(self, task: str, topics: Optional[list[str]] = None, task_id: Optional[str] = None) -> OrchestratorState:
+        """Async execution of the orchestrator workflow."""
+        initial_state: OrchestratorState = {
+            "task": task,
+            "task_id": task_id or f"orch_{id(task)}",
+            "plan": [],
+            "current_step_index": 0,
+            "articles": [],
+            "research_results": [],
+            "analysis_results": "",
+            "synthesis_result": "",
+            "final_report": "",
+            "email_sent": False,
+            "email_result": None,
+            "validation_errors": [],
+            "iteration_count": 0,
+            "max_iterations": 5,
+            "errors": [],
+            "started_at": None,
+            "completed_at": None,
+        }
+
+        if topics:
+            initial_state["task"] = f"{task} (topics: {', '.join(topics)})"
+
+        result = await self._graph.ainvoke(initial_state)
+        logger.info("Orchestrator workflow completed")
+        return result
 
 
 def create_orchestrator_workflow(

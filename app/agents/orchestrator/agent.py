@@ -62,10 +62,6 @@ class OrchestratorAgent(BaseAgent):
         self._checkpointer = checkpointer
 
     @property
-    def config(self) -> OrchestratorConfig:
-        return self._config
-
-    @property
     def name(self) -> str:
         return "orchestrator"
 
@@ -119,7 +115,7 @@ class OrchestratorAgent(BaseAgent):
         try:
             await self.setup()
 
-            result_state = self._workflow.run(task=task, topics=topics)
+            result_state = await self._workflow.run_async(task=task, topics=topics)
 
             execution_time = (datetime.now() - start_time).total_seconds()
 

@@ -89,6 +89,9 @@ class DeepResearchNodes:
         self._web_search_tool = None
         self._scholar_tool = None
         self._research_paper_tool = None
+        self._github_tool = None
+        self._arxiv_tool = None
+        self._openalex_tool = None
 
     @property
     def llm_client(self):
@@ -140,6 +143,27 @@ class DeepResearchNodes:
             self._research_paper_tool = ResearchPaperTool()
         return self._research_paper_tool
 
+    def _get_github_tool(self) -> Any:
+        """Lazy load GitHub tool."""
+        if self._github_tool is None:
+            from app.tools.social.github import GitHubTool
+            self._github_tool = GitHubTool()
+        return self._github_tool
+
+    def _get_arxiv_tool(self) -> Any:
+        """Lazy load ArXiv tool."""
+        if self._arxiv_tool is None:
+            from app.tools.social.arxiv import ArXivTool
+            self._arxiv_tool = ArXivTool()
+        return self._arxiv_tool
+
+    def _get_openalex_tool(self) -> Any:
+        """Lazy load OpenAlex tool."""
+        if self._openalex_tool is None:
+            from app.tools.web.openalex import OpenAlexTool
+            self._openalex_tool = OpenAlexTool()
+        return self._openalex_tool
+
     async def _search_with_fallback(self, query: str) -> dict[str, Any]:
         """Execute search with multi-tool fallback chain."""
         # Try Tavily first
@@ -161,6 +185,51 @@ class DeepResearchNodes:
                     return result.get("data", {})
             except Exception as exc:
                 logger.debug("Scholar search failed: %s", exc)
+        else:
+            # Fallback to OpenAlex (Free & Open Source)
+            openalex = self._get_openalex_tool()
+            try:
+                result = await openalex.execute({"query": query, "limit": 5})
+                if result.get("success"):
+                    data = result.get("data", {})
+                    # Standardize format for OpenAlex results
+                    papers = data.get("results", [])
+                    formatted_results = [
+                        {"title": p.get("title"), "url": p.get("url"), "content": f"Authors: {', '.join(p.get('authors', []))}. Year: {p.get('year')}. Cited by: {p.get('cited_by')}"}
+                        for p in papers
+                    ]
+                    return {"results": formatted_results}
+            except Exception as exc:
+                logger.debug("OpenAlex search failed: %s", exc)
+
+        # Try ArXiv for academic preprints
+        arxiv = self._get_arxiv_tool()
+        try:
+            result = await arxiv.execute({"action": "search", "query": query, "limit": 5})
+            if result.get("success"):
+                papers = result.get("data", [])
+                formatted_results = [
+                    {"title": p.get("title"), "url": p.get("url"), "content": p.get("abstract")}
+                    for p in papers
+                ]
+                return {"results": formatted_results}
+        except Exception as exc:
+            logger.debug("ArXiv search failed: %s", exc)
+
+        # Try GitHub for technical/code queries
+        if any(term in query.lower() for term in ["repo", "github", "code", "library", "framework", "implementation"]):
+            github = self._get_github_tool()
+            try:
+                result = await github.execute({"action": "search_repos", "query": query, "limit": 5})
+                if result.get("success"):
+                    repos = result.get("data", [])
+                    formatted_results = [
+                        {"title": f"GitHub: {r.get('name')}", "url": r.get("url"), "content": r.get("description")}
+                        for r in repos
+                    ]
+                    return {"results": formatted_results}
+            except Exception as exc:
+                logger.debug("GitHub search failed: %s", exc)
 
         # Fallback to web search
         web_search = self._get_web_search_tool()
