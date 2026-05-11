@@ -27,6 +27,26 @@ class StepType(str, Enum):
     VALIDATION = "validation"
     EMAIL = "email"
     CUSTOM = "custom"
+    SUMMARY = "summary"
+    COLLECTION = "collection"
+    MONITORING = "monitoring"
+    CRAWL = "crawl"
+    SEARCH = "search"
+    TASK = "task"
+    FETCH = "fetch"
+    SCRAPE = "scrape"
+    SOCIAL = "social"
+    PAPER = "paper"
+    VIDEO = "video"
+    NEWS = "news"
+
+
+def parse_step_type(value: str) -> StepType:
+    """Parse a string into StepType with fallback to RESEARCH."""
+    try:
+        return StepType(value.lower())
+    except ValueError:
+        return StepType.RESEARCH
 
 
 class PlanStep(TypedDict):

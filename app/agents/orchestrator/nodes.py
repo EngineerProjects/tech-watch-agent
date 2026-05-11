@@ -25,6 +25,7 @@ from app.agents.orchestrator.state import (
     PlanStep,
     StepStatus,
     StepType,
+    parse_step_type,
 )
 from app.agents.orchestrator.prompts import (
     SUPERVISOR_USER,
@@ -95,12 +96,22 @@ class OrchestratorNodes:
         return self._deep_research_agent
 
     def _get_tool(self, tool_name: str) -> Optional[Any]:
+        """Get a tool by name from registry.
+
+        Also handles agent-as-tool by checking the registry for
+        agents wrapped as tools.
+        """
+        # First try the regular tool registry
         tool = self._registry.get(tool_name)
+
+        # If not found, try agent-as-tool pattern
         if tool is None:
-            for t in self._registry.list_tools_metadata():
-                if t.name == tool_name:
-                    pass
+            from app.agents import wrap_agent_as_tool
+            tool = wrap_agent_as_tool(tool_name)
+
+        if tool is None:
             logger.warning("Tool '%s' not found in registry", tool_name)
+
         return tool
 
     async def supervisor(self, state: OrchestratorState) -> OrchestratorState:
@@ -163,7 +174,7 @@ class OrchestratorNodes:
                     step_id=step.get("step_id", f"step_{i+1}"),
                     name=step.get("name", f"Step {i+1}"),
                     description=step.get("description", ""),
-                    step_type=StepType(step.get("step_type", "research")),
+                    step_type=parse_step_type(step.get("step_type", "research")),
                     status=StepStatus.PENDING,
                     tool_name=step.get("tool_name"),
                     params=step.get("params", {}),
@@ -223,22 +234,23 @@ class OrchestratorNodes:
         step_id = step["step_id"]
 
         try:
-            # Handle Deep Research step type
+            # Handle DEEP_RESEARCH step type - use unified tool lookup
             if step_type == StepType.DEEP_RESEARCH:
-                logger.info("Executing DEEP RESEARCH for step %s", step_id)
-                agent = self._get_deep_research_agent()
+                logger.info("Executing DEEP RESEARCH for step %s (via tool registry)", step_id)
+                tool = self._get_tool("deep_research")
+                if tool is None:
+                    raise ValueError("Deep research agent not found in registry")
+
                 query = step.get("description", params.get("query", state.get("task", "")))
-                result = await agent.execute({"query": query, "metadata": {"parent_task_id": state.get("task_id")}})
-                
-                if result.success:
-                    success = True
-                    data = {"report": result.output.get("report"), "findings": result.output.get("research_results")}
-                    error = None
-                else:
-                    success = False
-                    data = []
-                    error = ", ".join(result.errors)
-            
+                result = await tool.execute({
+                    "query": query,
+                    "metadata": {"parent_task_id": state.get("task_id")}
+                })
+
+                success = result.get("success", False)
+                data = result.get("data", {})
+                error = result.get("error")
+
             # Normal tool execution
             elif not tool_name:
                 plan[current_idx]["status"] = StepStatus.SKIPPED
@@ -325,22 +337,33 @@ class OrchestratorNodes:
             step_id = step["step_id"]
 
             try:
-                # Handle Deep Research step type
+                # Handle DEEP_RESEARCH step type - use unified tool lookup
                 if step_type == StepType.DEEP_RESEARCH:
-                    logger.info("Executing DEEP RESEARCH for step %s", step_id)
-                    agent = self._get_deep_research_agent()
+                    logger.info("Executing DEEP RESEARCH for step %s (via tool registry)", step_id)
+                    tool = self._get_tool("deep_research")
+                    if tool is None:
+                        return idx, {"success": False, "error": "Deep research agent not found in registry", "step_id": step_id, "tool": "deep_research"}
+
                     query = step.get("description", params.get("query", state.get("task", "")))
-                    result = await agent.execute({"query": query, "metadata": {"parent_task_id": state.get("task_id")}})
-                    
-                    if result.success:
+                    result = await tool.execute({
+                        "query": query,
+                        "metadata": {"parent_task_id": state.get("task_id")}
+                    })
+
+                    if result.get("success"):
                         return idx, {
                             "success": True,
-                            "data": {"report": result.output.get("report"), "findings": result.output.get("research_results")},
+                            "data": result.get("data", {}),
                             "step_id": step_id,
-                            "tool": "deep_research_agent",
+                            "tool": "deep_research",
                         }
                     else:
-                        return idx, {"success": False, "error": ", ".join(result.errors), "step_id": step_id, "tool": "deep_research_agent"}
+                        return idx, {
+                            "success": False,
+                            "error": result.get("error", "Unknown error"),
+                            "step_id": step_id,
+                            "tool": "deep_research"
+                        }
 
                 # Normal tool execution
                 if not tool_name:
