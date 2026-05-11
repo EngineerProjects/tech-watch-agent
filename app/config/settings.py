@@ -31,6 +31,9 @@ class Settings:
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
 
+    # Z.ai specific settings
+    zai_api_key: str = ""
+
     newsletter_title: str = "Tech Watch Agent"
     newsletter_topics: list[str] = field(
         default_factory=lambda: [
@@ -102,6 +105,7 @@ class Settings:
             llm_fallback_models=_parse_csv(os.getenv("LLM_FALLBACK_MODELS", "")),
             llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
             llm_max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000")),
+            zai_api_key=os.getenv("ZAI_API_KEY", ""),
             newsletter_title=os.getenv("NEWSLETTER_TITLE", "Tech Watch Agent"),
             newsletter_topics=_parse_csv(
                 os.getenv(

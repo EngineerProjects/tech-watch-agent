@@ -40,7 +40,13 @@ class ChatCompletionClient:
         self.default_model = self.settings.llm_model or self._provider_config.default_model
         self.default_temperature = self.settings.llm_temperature
         self.default_max_tokens = self.settings.llm_max_tokens
-        self._api_key = self.settings.llm_api_key
+        
+        # Use provider-specific API key if available
+        if self._provider_name == LLMProviders.ZAI and self.settings.zai_api_key:
+            self._api_key = self.settings.zai_api_key
+        else:
+            self._api_key = self.settings.llm_api_key
+            
         self._http_client = http_client
         # Fallback model chain for when the primary model is rate-limited.
         # Models are tried left-to-right before giving up entirely.
@@ -318,7 +324,12 @@ class ChatCompletionClient:
             return ""
 
         message = choices[0].get("message", {})
+        
+        # Handle Z.ai and other providers that use reasoning_content
         content = message.get("content", "")
+        if not content:
+            content = message.get("reasoning_content", "")
+            
         return content.strip() if isinstance(content, str) else ""
 
     def health_check(self) -> bool:
