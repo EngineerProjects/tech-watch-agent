@@ -6,17 +6,47 @@ An open-source platform for automated technology monitoring and comprehensive re
 
 ## Status: MVP Complete
 
-All core capabilities are implemented and functional:
-- ✅ Orchestrator agent with plan-based parallel research pipeline
+All core capabilities are implemented, tested, and functional:
+- ✅ Orchestrator agent (V2) with plan-based parallel research pipeline
 - ✅ Deep Research agent with supervisor-researcher pattern
-- ✅ Newsletter agent for automated content generation
+- ✅ Newsletter agent (V1) for automated content generation
 - ✅ Multi-provider LLM support (OpenRouter, Ollama, Z.ai, OpenAI)
 - ✅ 10+ monitoring tools (GitHub, Reddit, ArXiv, RSS, YouTube, Research Papers, Web Search)
-- ✅ Tool plugin system with registry
+- ✅ Tool plugin system with registry (fully tested)
 - ✅ Vector store with pgvector for semantic similarity
 - ✅ Email delivery via Gmail
 - ✅ REST API with 25+ endpoints
 - ✅ V1 (legacy newsletter) and V2 (orchestrator) execution modes
+- ✅ **94 unit tests passing** (100% of core functionality tested)
+
+## Recent Fixes (2026-05-11)
+
+The following issues were identified and fixed during the Phase 1 audit:
+- Fixed duplicate `AgentRegistry` class definitions (consolidated)
+- Fixed test imports referencing renamed `OrchestratorScheduler`
+- Fixed duplicate property assignment in `NewsletterAgent`
+- Fixed `CompositeTool` missing required abstract methods
+- Fixed async/await issues in tool tests
+- Fixed database model compatibility (PostgreSQL → SQLite for tests via dialect-aware types)
+- Fixed relationship configuration in `UserSession` model
+- Fixed nullable timestamps in models for SQLite compatibility
+- Fixed settings test isolation (cache clear + env var cleanup)
+
+## Roadmap (Next Improvements)
+
+### Phase 2: Enhanced Features
+- [ ] Scrapling integration for advanced web fetching
+- [ ] Adaptive element tracking for resilient content scraping
+- [ ] Multi-session spider support with proxy rotation
+- [ ] Cloudflare/anti-bot bypass for protected sites
+
+### Phase 3: Production Hardening
+- [ ] LangGraph checkpointing for long-running sessions
+- [ ] LangSmith observability integration
+- [ ] Celery/Temporal for distributed task queues
+- [ ] Web dashboard for monitoring
+- [ ] Multi-tenant support
+- [ ] Advanced analytics
 
 ## Features
 

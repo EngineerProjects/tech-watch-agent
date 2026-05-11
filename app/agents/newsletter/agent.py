@@ -85,7 +85,6 @@ class NewsletterAgent(BaseAgent):
         self._workflow = workflow
         self._nodes = nodes
         self._article_service = None
-        self._article_service = None
 
     async def setup(self) -> None:
         """Set up agent resources.

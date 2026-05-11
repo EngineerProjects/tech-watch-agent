@@ -24,12 +24,65 @@ from sqlalchemy import (
     String,
     Text,
     func,
+    TypeDecorator,
+    CHAR,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB as PG_JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from pgvector.sqlalchemy import Vector
+from sqlalchemy.types import JSON
+
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    Vector = None
 
 from app.db.base import Base
+
+
+class GUID(TypeDecorator):
+    """Platform-independent GUID type.
+
+    Uses PostgreSQL's UUID type when available, otherwise uses CHAR(36).
+    """
+
+    impl = CHAR
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(PG_GUID())
+        return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        if dialect.name == "postgresql":
+            return value if isinstance(value, uuid.UUID) else uuid.UUID(value)
+        if isinstance(value, uuid.UUID):
+            return str(value)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        if not isinstance(value, uuid.UUID):
+            return uuid.UUID(value)
+        return value
+
+
+class JSONType(TypeDecorator):
+    """Platform-independent JSON type.
+
+    Uses PostgreSQL's JSONB when available, otherwise uses generic JSON.
+    """
+
+    impl = JSON
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(PG_JSONB())
+        return dialect.type_descriptor(JSON())
 
 
 class User(Base):
@@ -42,26 +95,27 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         primary_key=True,
         default=uuid.uuid4,
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     username: Mapped[str] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    preferences: Mapped[dict] = mapped_column(JSONB, default=dict)
+    preferences: Mapped[dict] = mapped_column(JSONType(), default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
-    updated_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
-        onupdate=func.now(),
+        nullable=True,
     )
 
     # Relationships
     newsletter_runs = relationship("NewsletterRun", back_populates="user", lazy="dynamic")
     user_topics = relationship("UserTopic", back_populates="user", lazy="dynamic")
+    sessions = relationship("UserSession", back_populates="user")
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email})>"
@@ -77,12 +131,12 @@ class UserTopic(Base):
     __tablename__ = "user_topics"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         primary_key=True,
         default=uuid.uuid4,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         ForeignKey("users.id", ondelete="CASCADE"),
         index=True,
     )
@@ -112,20 +166,20 @@ class Article(Base):
     __tablename__ = "articles"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         primary_key=True,
         default=uuid.uuid4,
     )
     title: Mapped[str] = mapped_column(String(500), index=True)
     summary: Mapped[str] = mapped_column(Text, nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=True)
-    url: Mapped[str] = mapped_column(String(1000), index=True)
+    url: Mapped[str] = mapped_column(String(1000))
     source: Mapped[str] = mapped_column(String(255), index=True)
     topic: Mapped[str] = mapped_column(String(255), index=True)
     published_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     relevance_score: Mapped[int] = mapped_column(Integer, default=0)
     embedding_vector: Mapped[Optional[list[float]]] = mapped_column(Vector(1536), nullable=True)
-    meta_data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    meta_data: Mapped[dict] = mapped_column(JSONType(), default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -160,12 +214,12 @@ class NewsletterRun(Base):
     __tablename__ = "newsletter_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         primary_key=True,
         default=uuid.uuid4,
     )
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -174,7 +228,7 @@ class NewsletterRun(Base):
     markdown_content: Mapped[str] = mapped_column(Text)
     html_content: Mapped[str] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), index=True)
-    topics_covered: Mapped[dict] = mapped_column(JSONB, default=list)
+    topics_covered: Mapped[dict] = mapped_column(JSONType(), default=list)
     articles_count: Mapped[int] = mapped_column(Integer, default=0)
     delivery_success: Mapped[bool] = mapped_column(Boolean, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -208,17 +262,17 @@ class NewsletterRunArticle(Base):
     __tablename__ = "newsletter_run_articles"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         primary_key=True,
         default=uuid.uuid4,
     )
     newsletter_run_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         ForeignKey("newsletter_runs.id", ondelete="CASCADE"),
         index=True,
     )
     article_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         ForeignKey("articles.id", ondelete="CASCADE"),
         index=True,
     )
@@ -253,12 +307,12 @@ class ResearchSession(Base):
     __tablename__ = "research_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         primary_key=True,
         default=uuid.uuid4,
     )
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
@@ -266,9 +320,9 @@ class ResearchSession(Base):
     research_brief: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(50), index=True)
     final_report: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    notes: Mapped[list] = mapped_column(JSONB, default=list)
-    raw_notes: Mapped[list] = mapped_column(JSONB, default=list)
-    meta_data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    notes: Mapped[list] = mapped_column(JSONType(), default=list)
+    raw_notes: Mapped[list] = mapped_column(JSONType(), default=list)
+    meta_data: Mapped[dict] = mapped_column(JSONType(), default=dict)
     iterations_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -291,18 +345,18 @@ class ToolExecution(Base):
     __tablename__ = "tool_executions"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         primary_key=True,
         default=uuid.uuid4,
     )
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         ForeignKey("research_sessions.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
     tool_name: Mapped[str] = mapped_column(String(100), index=True)
-    tool_input: Mapped[dict] = mapped_column(JSONB)
+    tool_input: Mapped[dict] = mapped_column(JSONType())
     tool_output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -328,33 +382,33 @@ class UserSession(Base):
     __tablename__ = "user_sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         primary_key=True,
         default=uuid.uuid4,
     )
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
+        GUID(),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
     )
-    preferences: Mapped[dict] = mapped_column(JSONB, default=dict)
-    topics: Mapped[list] = mapped_column(JSONB, default=list)
-    seen_article_ids: Mapped[list] = mapped_column(JSONB, default=list)
-    meta_data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    preferences: Mapped[dict] = mapped_column(JSONType(), default=dict)
+    topics: Mapped[list] = mapped_column(JSONType(), default=list)
+    seen_article_ids: Mapped[list] = mapped_column(JSONType(), default=list)
+    meta_data: Mapped[dict] = mapped_column(JSONType(), default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         index=True,
     )
-    updated_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
-        onupdate=func.now(),
+        nullable=True,
     )
 
     # Relationships
-    user = relationship("User", back_populates="sessions", foreign_keys=[user_id])
+    user = relationship("User", back_populates="sessions")
 
     def __repr__(self) -> str:
         return f"<UserSession(id={self.id}, user_id={self.user_id}, is_active={self.is_active})>"

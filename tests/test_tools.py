@@ -5,6 +5,7 @@ This module tests the BaseTool abstract class and ToolRegistry,
 ensuring proper tool registration, execution, and management.
 """
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -150,7 +151,7 @@ class TestBaseTool:
     def test_mock_tool_execution(self):
         """Test executing a mock tool."""
         tool = MockSearchTool()
-        result = tool.execute_sync({"query": "test"})
+        result = asyncio.run(tool.execute({"query": "test"}))
 
         assert result["success"] is True
 
@@ -182,12 +183,13 @@ class TestBaseTool:
         tool.enable()
         assert tool.enabled is True
 
-    def test_execute_safe_disabled_tool(self):
+    @pytest.mark.asyncio
+    async def test_execute_safe_disabled_tool(self):
         """Test executing a disabled tool."""
         tool = MockCrawlTool()
         tool.disable()
 
-        result = tool.execute_safe({"param": "value"})
+        result = await tool.execute_safe({"param": "value"})
 
         assert result["success"] is False
         assert "disabled" in result["error"]

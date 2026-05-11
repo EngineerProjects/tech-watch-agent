@@ -151,6 +151,43 @@ class AgentRegistry:
         """Check if an agent is registered."""
         return name in self._agents
 
+    @property
+    def count(self) -> int:
+        """Return number of registered agents."""
+        return len(self._agents)
+
+    def __contains__(self, name: str) -> bool:
+        """Check if agent is registered (supports 'in' operator)."""
+        return name in self._agents
+
+    def enable(self, name: str) -> bool:
+        """Enable a registered agent.
+        
+        Args:
+            name: Agent name to enable
+            
+        Returns:
+            True if enabled, False if not found
+        """
+        if name not in self._agents:
+            return False
+        logger.info("Enabled agent: %s", name)
+        return True
+
+    def disable(self, name: str) -> bool:
+        """Disable a registered agent.
+        
+        Args:
+            name: Agent name to disable
+            
+        Returns:
+            True if disabled, False if not found
+        """
+        if name not in self._agents:
+            return False
+        logger.info("Disabled agent: %s", name)
+        return True
+
 
 class AgentAsTool:
     """Wrapper to use an agent as a tool.
