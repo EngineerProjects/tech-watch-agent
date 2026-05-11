@@ -34,17 +34,17 @@ def initialize_agents() -> None:
     This should be called at application startup to make
     agents available for orchestration.
     """
-    from app.agents.deep_research.agent import create_deep_research_agent
+    from app.agents.deep_research.simple_agent import create_simple_deep_research_agent
     from app.agents.newsletter.agent import create_newsletter_agent
 
-    # Register deep_research agent
-    deep_research = create_deep_research_agent()
+    # Register deep_research agent (using simplified version)
+    deep_research = create_simple_deep_research_agent()
     register_agent(
         name="deep_research",
         agent=deep_research,
         metadata=AgentMetadata(
             name="deep_research",
-            description="Multi-agent supervisor-researcher pattern for in-depth investigations",
+            description="Deep research agent for in-depth topic investigation",
             category="research",
             supports_async=True,
             supports_parallel=True,
