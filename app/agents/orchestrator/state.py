@@ -66,6 +66,8 @@ class PlanStep(TypedDict):
 class OrchestratorState(TypedDict, total=False):
     task: str
     task_id: str
+    topics: list[str]
+    send_email: bool
     plan: list[PlanStep]
     current_step_index: int
     articles: list[dict]
@@ -76,8 +78,12 @@ class OrchestratorState(TypedDict, total=False):
     email_sent: bool
     email_result: str | None
     validation_errors: list[str]
+    quality_score: float
     iteration_count: int
     max_iterations: int
     errors: list[str]
+    approval_status: str
+    approval_result: str
+    approved_at: str | None
     started_at: str | None
     completed_at: str | None

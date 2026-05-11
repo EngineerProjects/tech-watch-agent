@@ -5,17 +5,25 @@ Implements the core nodes for the orchestrator LangGraph workflow:
 - supervisor: Entry point that delegates to other nodes
 - planner: Generates the execution plan
 - dispatcher: Executes individual plan steps
+- dispatcher_parallel: Executes steps in parallel with retry policies
 - collector: Aggregates results from parallel steps
 - validator: Validates quality of collected results
 - analyzer: Extracts insights from collected data
 - synthesizer: Creates the final report
 - emailer: Sends the report via email
+
+Features:
+- Retry policies with exponential backoff for parallel execution
+- Fallback chain (try multiple tools if one fails)
+- Error aggregation with detailed logging
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Optional
@@ -43,6 +51,19 @@ from app.core.logging import get_logger
 
 
 logger = get_logger(__name__)
+
+RETRY_POLICY = {
+    "max_attempts": 3,
+    "initial_interval": 1.0,
+    "backoff_factor": 2.0,
+    "max_interval": 60.0,
+}
+
+FALLBACK_TOOLS = {
+    "search": ["duckduckgo_search", "arxiv", "openalex_search"],
+    "research": ["deep_research", "tavily", "arxiv"],
+    "crawl": ["crawl4ai", "scrapling", "http_fetch"],
+}
 
 
 def _parse_json_safe(text: str) -> Any:
@@ -316,10 +337,79 @@ class OrchestratorNodes:
 
         return state
 
-    async def dispatcher_parallel(self, state: OrchestratorState) -> OrchestratorState:
-        """Fan-out dispatcher: launch all pending research steps in parallel."""
-        import asyncio
+    async def _execute_with_retry(
+        self,
+        step: PlanStep,
+        idx: int,
+        tool_name: str,
+        params: dict,
+        state: OrchestratorState,
+    ) -> tuple[int, dict]:
+        """Execute a step with retry policy and fallback chain."""
+        step_id = step["step_id"]
+        step_type = step.get("step_type")
+        policy = RETRY_POLICY.copy()
 
+        tools_to_try = [tool_name]
+        if tool_name in FALLBACK_TOOLS:
+            tools_to_try.extend(FALLBACK_TOOLS[tool_name])
+
+        last_error = None
+        for attempt in range(policy["max_attempts"]):
+            for current_tool in tools_to_try:
+                try:
+                    interval = min(
+                        policy["initial_interval"] * (policy["backoff_factor"] ** attempt),
+                        policy["max_interval"]
+                    )
+                    if attempt > 0 and interval > 0:
+                        await asyncio.sleep(interval)
+
+                    if step_type == StepType.DEEP_RESEARCH:
+                        tool = self._get_tool("deep_research")
+                        if tool is None:
+                            continue
+                        query = step.get("description", params.get("query", state.get("task", "")))
+                        result = await tool.execute({
+                            "query": query,
+                            "metadata": {"parent_task_id": state.get("task_id")}
+                        })
+                    else:
+                        tool = self._get_tool(current_tool)
+                        if tool is None:
+                            continue
+                        if hasattr(tool, "execute"):
+                            result = await tool.execute(params)
+                        elif hasattr(tool, "execute_safe"):
+                            result = await tool.execute_safe(params)
+                        else:
+                            continue
+
+                    if result.get("success"):
+                        return idx, {
+                            "success": True,
+                            "data": result.get("data", {}),
+                            "step_id": step_id,
+                            "tool": current_tool,
+                            "attempts": attempt + 1,
+                        }
+                    last_error = result.get("error", "Unknown error")
+                except Exception as exc:
+                    last_error = str(exc)
+
+        return idx, {
+            "success": False,
+            "error": last_error or f"All tools failed after {policy['max_attempts']} attempts",
+            "step_id": step_id,
+            "tool": tool_name,
+            "attempts": policy["max_attempts"],
+        }
+
+    async def dispatcher_parallel(self, state: OrchestratorState) -> OrchestratorState:
+        """Fan-out dispatcher: launch all pending research steps in parallel.
+
+        Uses retry policies with exponential backoff and fallback chains.
+        """
         plan = state.get("plan", [])
         pending_indices = [
             i for i, step in enumerate(plan)
@@ -331,67 +421,10 @@ class OrchestratorNodes:
             return await self.dispatcher(state)
 
         async def run_step(step: PlanStep, idx: int) -> tuple[int, dict]:
-            tool_name = step.get("tool_name")
-            step_type = step.get("step_type")
+            tool_name = step.get("tool_name") or "search"
             params = step.get("params", {}) or {}
             step_id = step["step_id"]
-
-            try:
-                # Handle DEEP_RESEARCH step type - use unified tool lookup
-                if step_type == StepType.DEEP_RESEARCH:
-                    logger.info("Executing DEEP RESEARCH for step %s (via tool registry)", step_id)
-                    tool = self._get_tool("deep_research")
-                    if tool is None:
-                        return idx, {"success": False, "error": "Deep research agent not found in registry", "step_id": step_id, "tool": "deep_research"}
-
-                    query = step.get("description", params.get("query", state.get("task", "")))
-                    result = await tool.execute({
-                        "query": query,
-                        "metadata": {"parent_task_id": state.get("task_id")}
-                    })
-
-                    if result.get("success"):
-                        return idx, {
-                            "success": True,
-                            "data": result.get("data", {}),
-                            "step_id": step_id,
-                            "tool": "deep_research",
-                        }
-                    else:
-                        return idx, {
-                            "success": False,
-                            "error": result.get("error", "Unknown error"),
-                            "step_id": step_id,
-                            "tool": "deep_research"
-                        }
-
-                # Normal tool execution
-                if not tool_name:
-                    return idx, {"success": False, "error": "No tool specified", "step_id": step_id}
-
-                tool = self._get_tool(tool_name)
-                if tool is None:
-                    return idx, {"success": False, "error": f"Tool '{tool_name}' not found", "step_id": step_id}
-
-                if hasattr(tool, "execute"):
-                    result = await tool.execute(params)
-                elif hasattr(tool, "execute_safe"):
-                    result = await tool.execute_safe(params)
-                else:
-                    return idx, {"success": False, "error": "No execute method", "step_id": step_id}
-
-                if isinstance(result, dict):
-                    return idx, {
-                        "success": result.get("success", False),
-                        "data": result.get("data", []),
-                        "error": result.get("error"),
-                        "step_id": step_id,
-                        "tool": tool_name,
-                    }
-                return idx, {"success": True, "data": result or [], "step_id": step_id, "tool": tool_name}
-            except Exception as exc:
-                logger.error("Error in run_step for %s: %s", step_id, exc)
-                return idx, {"success": False, "error": str(exc), "step_id": step_id, "tool": tool_name if 'tool_name' in locals() else "unknown"}
+            return await self._execute_with_retry(step, idx, tool_name, params, state)
 
         try:
             tasks = [run_step(plan[i], i) for i in pending_indices]
@@ -488,7 +521,10 @@ class OrchestratorNodes:
         return state
 
     async def validator(self, state: OrchestratorState) -> OrchestratorState:
-        """Validate that collected results meet quality thresholds."""
+        """Validate that collected results meet quality thresholds.
+
+        Also computes a quality score for human-in-the-loop approval.
+        """
         research_results = state.get("research_results", [])
         task = state.get("task", "")
 
@@ -499,13 +535,30 @@ class OrchestratorNodes:
         source_count = len(research_results)
 
         validation_errors = []
+        quality_score = 0.0
+
         if article_count < 3:
             validation_errors.append(f"Insufficient articles: {article_count} < 3")
+        else:
+            quality_score += 0.4
+
         if source_count < 2:
             validation_errors.append(f"Insufficient sources: {source_count} < 2")
+        else:
+            quality_score += 0.2
+
+        has_successful_results = any(r.get("count", 0) > 0 for r in research_results)
+        if has_successful_results:
+            quality_score += 0.3
+
+        if len(task) > 20:
+            quality_score += 0.1
+
+        quality_score = min(quality_score, 1.0)
 
         state["validation_errors"] = validation_errors
         state["iteration_count"] = state.get("iteration_count", 0) + 1
+        state["quality_score"] = quality_score
 
         if validation_errors:
             max_iter = state.get("max_iterations", 5)
@@ -515,7 +568,32 @@ class OrchestratorNodes:
             else:
                 logger.info("Validation failed (attempt %d/%d): %s. Will retry.", iteration, max_iter, validation_errors)
 
-        logger.info("Validator: %d articles from %d sources", article_count, source_count)
+        logger.info("Validator: %d articles from %d sources, quality=%.2f", article_count, source_count, quality_score)
+        return state
+
+    async def human_approval(self, state: OrchestratorState) -> OrchestratorState:
+        """Human-in-the-loop approval checkpoint.
+
+        This node pauses execution and waits for human approval.
+        In a real implementation, this would use LangGraph's interrupt
+        mechanism or a message queue to pause and wait for user input.
+
+        For now, it automatically approves if quality score is above threshold.
+        """
+        quality_score = state.get("quality_score", 0.0)
+        approval_threshold = state.get("approval_threshold", 0.7)
+
+        state["approval_status"] = "auto_approved" if quality_score >= approval_threshold else "needs_review"
+
+        if quality_score >= approval_threshold:
+            logger.info("Auto-approved: quality %.2f >= threshold %.2f", quality_score, approval_threshold)
+            state["approval_result"] = "approved"
+        else:
+            logger.warning("Needs review: quality %.2f < threshold %.2f", quality_score, approval_threshold)
+            state["approval_result"] = "pending"
+
+        state["approved_at"] = datetime.now().isoformat() if quality_score >= approval_threshold else None
+
         return state
 
     async def analyzer(self, state: OrchestratorState) -> OrchestratorState:

@@ -88,6 +88,85 @@ class NewsletterNodes:
         )
         return state
 
+    def quality_checker(self, state: NewsletterState) -> NewsletterState:
+        """Evaluate the quality of gathered content and determine routing."""
+        articles = state.get("raw_articles", [])
+        research_summary = state.get("research_summary", "")
+
+        article_count = len(articles)
+        summary_length = len(research_summary)
+
+        quality_score = 0.0
+        quality_factors = []
+
+        if article_count >= 5:
+            quality_score += 0.4
+            quality_factors.append(f"{article_count} articles (>= 5)")
+        elif article_count >= 3:
+            quality_score += 0.2
+            quality_factors.append(f"{article_count} articles (>= 3)")
+        else:
+            quality_factors.append(f"Only {article_count} articles")
+
+        if summary_length > 500:
+            quality_score += 0.3
+            quality_factors.append("Good summary length")
+        elif summary_length > 200:
+            quality_score += 0.15
+            quality_factors.append("Adequate summary length")
+
+        if any(a.get("url") for a in articles if isinstance(a, dict)):
+            quality_score += 0.3
+            quality_factors.append("Articles have sources")
+
+        quality_score = min(quality_score, 1.0)
+
+        state["quality_score"] = quality_score
+        state["quality_factors"] = quality_factors
+
+        if quality_score >= 0.7:
+            state["quality_routing"] = "standard"
+        elif quality_score >= 0.4:
+            state["quality_routing"] = "enhanced"
+        else:
+            state["quality_routing"] = "basic"
+
+        logger.info(
+            "Quality check: score=%.2f, routing=%s, factors=%s",
+            quality_score,
+            state["quality_routing"],
+            quality_factors,
+        )
+
+        return state
+
+    def enhanced_analyst(self, state: NewsletterState) -> NewsletterState:
+        """Enhanced analyst for lower quality content - more thorough analysis."""
+        research_summary = state.get("research_summary", "")
+        if not research_summary:
+            return self.analyst(state)
+
+        prompt = f"""You are a thorough research analyst. Provide an in-depth analysis.
+
+Research Summary:
+{research_summary}
+
+Provide:
+1. Key themes and patterns
+2. Significant developments
+3. Implications and predictions
+4. Related topics to monitor
+
+Be comprehensive and analytical."""
+
+        state["key_insights"] = self._client().generate_completion(
+            prompt=prompt,
+            system_message="You are an expert research analyst.",
+            temperature=0.5,
+            max_tokens=2000,
+        )
+        return state
+
     @staticmethod
     def _format_articles(articles: list[dict[str, object]]) -> str:
         # We flatten article objects into a compact textual bundle because it is

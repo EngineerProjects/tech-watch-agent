@@ -5,13 +5,21 @@ This module defines the LangGraph workflow for newsletter generation.
 The workflow is composed of multiple stages (nodes) that process
 articles from initial collection to final newsletter composition.
 
-The graph architecture follows a linear pipeline pattern:
-researcher -> analyst -> opinion_writer -> editor
+The graph architecture follows a conditional pipeline pattern:
+- researcher -> quality_check -> conditional routing
+  - standard: analyst -> opinion_writer -> editor
+  - enhanced: enhanced_analyst -> opinion_writer -> editor
+  - basic: analyst -> editor (skip opinion writer)
 
-Each node processes the current state and passes results to the next stage.
+Features:
+- Quality-based routing for adaptive processing
+- Enhanced analysis for lower quality content
+- Parallel node support for future expansion
 """
 
-from typing import Optional
+from __future__ import annotations
+
+from typing import Literal, Optional
 
 from langgraph.graph import END, StateGraph
 
@@ -99,7 +107,9 @@ class NewsletterGraphBuilder:
 
         # Add default nodes
         workflow.add_node("researcher", self.nodes.researcher)
+        workflow.add_node("quality_check", self.nodes.quality_checker)
         workflow.add_node("analyst", self.nodes.analyst)
+        workflow.add_node("enhanced_analyst", self.nodes.enhanced_analyst)
         workflow.add_node("opinion_writer", self.nodes.opinion_writer)
         workflow.add_node("editor", self.nodes.editor)
 
@@ -110,9 +120,29 @@ class NewsletterGraphBuilder:
         # Set entry point
         workflow.set_entry_point(self._entry_point)
 
-        # Add default edges
-        workflow.add_edge("researcher", "analyst")
-        workflow.add_edge("analyst", "opinion_writer")
+        # Add default edges with conditional routing
+        workflow.add_edge("researcher", "quality_check")
+
+        workflow.add_conditional_edges(
+            "quality_check",
+            self._route_after_quality_check,
+            {
+                "standard": "analyst",
+                "enhanced": "enhanced_analyst",
+                "basic": "analyst",
+            }
+        )
+
+        workflow.add_conditional_edges(
+            "analyst",
+            self._route_after_analyst,
+            {
+                "with_opinion": "opinion_writer",
+                "skip_opinion": "editor",
+            }
+        )
+
+        workflow.add_edge("enhanced_analyst", "opinion_writer")
         workflow.add_edge("opinion_writer", "editor")
         workflow.add_edge("editor", END)
 
@@ -121,6 +151,18 @@ class NewsletterGraphBuilder:
             workflow.add_edge(from_node, to_node)
 
         return workflow.compile()
+
+    def _route_after_quality_check(self, state: NewsletterState) -> Literal["standard", "enhanced", "basic"]:
+        """Route based on quality score."""
+        routing = state.get("quality_routing", "standard")
+        return routing
+
+    def _route_after_analyst(self, state: NewsletterState) -> Literal["with_opinion", "skip_opinion"]:
+        """Route based on content quality - skip opinion writer for basic content."""
+        routing = state.get("quality_routing", "standard")
+        if routing == "basic":
+            return "skip_opinion"
+        return "with_opinion"
 
 
 class NewsletterWorkflow:

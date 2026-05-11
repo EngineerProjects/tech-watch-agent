@@ -567,19 +567,46 @@ class DeepResearchNodes:
         topics: list[str],
         parent_state: SupervisorState,
     ) -> list[dict[str, Any]]:
-        """Execute research units in parallel."""
-        tasks = [self._execute_single_researcher(topic, parent_state) for topic in topics]
+        """Execute research units in parallel with retry policies."""
+        tasks = [
+            self._execute_research_unit_with_retry(topic, parent_state)
+            for topic in topics
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         processed_results = []
-        for result in results:
+        for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.error("Research unit failed: %s", result)
-                processed_results.append({"compressed_research": "", "raw_notes": []})
+                logger.error("Research unit %d failed: %s", i, result)
+                processed_results.append({
+                    "compressed_research": f"Research on '{topics[i]}' failed: {str(result)}",
+                    "raw_notes": [],
+                    "success": False,
+                })
             else:
-                processed_results.append(result)
+                processed_results.append({**result, "success": True})
+
+        successful = sum(1 for r in processed_results if r.get("success"))
+        logger.info("Research units completed: %d/%d successful", successful, len(topics))
 
         return processed_results
+
+    async def _execute_research_unit_with_retry(
+        self,
+        topic: str,
+        parent_state: SupervisorState,
+        max_attempts: int = 2,
+    ) -> dict[str, Any]:
+        """Execute a research unit with retry on failure."""
+        last_error = None
+        for attempt in range(max_attempts):
+            try:
+                return await self._execute_single_researcher(topic, parent_state)
+            except Exception as exc:
+                last_error = exc
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(1.0 * (2 ** attempt))
+        raise last_error
 
     async def _execute_single_researcher(
         self,
@@ -670,6 +697,41 @@ class DeepResearchNodes:
                 if line:
                     topics.append(line)
         return topics[:3]
+
+    async def merge_results(
+        self,
+        state: SupervisorState,
+    ) -> dict[str, Any]:
+        """Merge and deduplicate research results from parallel units.
+
+        This node runs after supervisor_tools to aggregate results
+        from parallel research units and remove duplicates.
+        """
+        notes = state.get("notes", [])
+        raw_notes = state.get("raw_notes", [])
+
+        seen_urls = set()
+        deduplicated_raw_notes = []
+        for note in raw_notes:
+            url_match = note.split("Source: ")[1].split("\n")[0] if "Source: " in note else None
+            if url_match and url_match in seen_urls:
+                continue
+            if url_match:
+                seen_urls.add(url_match)
+            deduplicated_raw_notes.append(note)
+
+        unique_notes = list(dict.fromkeys(notes))
+
+        logger.info(
+            "Merge results: %d notes, %d raw notes (after deduplication)",
+            len(unique_notes),
+            len(deduplicated_raw_notes),
+        )
+
+        return {
+            "notes": {"type": "override", "value": unique_notes},
+            "raw_notes": {"type": "override", "value": deduplicated_raw_notes},
+        }
 
     async def final_report_generation(
         self,

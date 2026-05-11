@@ -88,6 +88,11 @@ class DeepResearchGraphBuilder:
         The supervisor manages research delegation to sub-agents.
         It implements a loop of planning -> delegating -> assessing.
 
+        Features:
+        - Parallel execution of research units with retry
+        - Results merging with deduplication
+        - Quality scoring and routing
+
         Returns:
             Compiled supervisor subgraph
         """
@@ -98,9 +103,11 @@ class DeepResearchGraphBuilder:
 
         supervisor_graph.add_node("supervisor", self.nodes.supervisor)
         supervisor_graph.add_node("supervisor_tools", self.nodes.supervisor_tools)
+        supervisor_graph.add_node("merge_results", self.nodes.merge_results)
 
         supervisor_graph.add_edge(START, "supervisor")
-        supervisor_graph.add_edge("supervisor_tools", "supervisor")
+        supervisor_graph.add_edge("supervisor_tools", "merge_results")
+        supervisor_graph.add_edge("merge_results", "supervisor")
 
         return supervisor_graph.compile()
 

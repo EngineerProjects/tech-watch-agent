@@ -3,6 +3,13 @@ Orchestrator agent implementation.
 
 This is the main orchestrator agent that coordinates all other agents
 and tools to complete research tasks end-to-end.
+
+Features:
+- LangGraph StateGraph workflow with conditional routing
+- Checkpointing support (memory + PostgreSQL)
+- Retry policies with exponential backoff
+- Fallback chains for tool failures
+- Human-in-the-loop approval checkpoints (optional)
 """
 
 from __future__ import annotations
@@ -13,7 +20,8 @@ from dataclasses import dataclass, field
 
 from app.agents.base.base_agent import BaseAgent, AgentConfig, AgentResult
 from app.agents.orchestrator.config import OrchestratorConfig
-from app.agents.orchestrator.graph import OrchestratorWorkflow, create_orchestrator_workflow
+from app.agents.orchestrator.graph import OrchestratorGraphBuilder
+from app.agents.orchestrator.state import OrchestratorState
 from app.agents.orchestrator.nodes import OrchestratorNodes
 from app.config.settings import Settings, get_settings
 from app.core.logging import get_logger
@@ -37,29 +45,27 @@ class OrchestratorAgent(BaseAgent):
     Uses LangGraph StateGraph with supervisor pattern.
     Falls back to legacy NewsletterOrchestrator for V1 compatibility.
 
-    Attributes:
-        workflow: The compiled LangGraph workflow
-        nodes: The orchestrator nodes
-        max_articles: Max articles per research step
-        send_email: Whether to send email after completion
+    Features:
+        - Checkpointing for state persistence (memory/postgres)
+        - Retry policies with exponential backoff
+        - Fallback chains for tool failures
+        - Human-in-the-loop approval checkpoints (optional)
     """
 
     def __init__(
         self,
         config: Optional[OrchestratorConfig] = None,
         settings: Optional[Settings] = None,
-        workflow: Optional[OrchestratorWorkflow] = None,
         nodes: Optional[OrchestratorNodes] = None,
-        checkpointer=None,
     ) -> None:
         if config is None:
             config = OrchestratorConfig()
 
         super().__init__(config=config, settings=settings)
 
-        self._workflow = workflow
         self._nodes = nodes
-        self._checkpointer = checkpointer
+        self._graph = None
+        self._config = config
 
     @property
     def name(self) -> str:
@@ -76,11 +82,12 @@ class OrchestratorAgent(BaseAgent):
         if self._nodes is None:
             self._nodes = OrchestratorNodes(max_articles=5, min_sources=2)
 
-        if self._workflow is None:
-            self._workflow = create_orchestrator_workflow(
-                nodes=self._nodes,
-                checkpointer=self._checkpointer,
-            )
+        graph_builder = OrchestratorGraphBuilder(
+            nodes=self._nodes,
+            enable_checkpointing=self._config.enable_checkpointing,
+            checkpoint_backend=self._config.checkpoint_backend,
+        )
+        self._graph = graph_builder.build()
 
         logger.info("Orchestrator agent setup complete")
 
@@ -115,7 +122,32 @@ class OrchestratorAgent(BaseAgent):
         try:
             await self.setup()
 
-            result_state = await self._workflow.run_async(task=task, topics=topics)
+            result_state = await self._graph.ainvoke({
+                "task": task,
+                "task_id": f"orch_{datetime.now().timestamp()}",
+                "topics": topics or [],
+                "send_email": send_email,
+                "plan": [],
+                "current_step_index": 0,
+                "articles": [],
+                "research_results": [],
+                "analysis_results": "",
+                "synthesis_result": "",
+                "final_report": "",
+                "email_sent": False,
+                "email_result": None,
+                "validation_errors": [],
+                "quality_score": 0.0,
+                "iteration_count": 0,
+                "max_iterations": self._config.max_iterations,
+                "approval_status": "",
+                "approval_result": "",
+                "approved_at": None,
+                "errors": [],
+                "started_at": None,
+                "completed_at": None,
+                "approval_threshold": self._config.approval_threshold,
+            })
 
             execution_time = (datetime.now() - start_time).total_seconds()
 

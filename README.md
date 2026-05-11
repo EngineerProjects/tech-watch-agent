@@ -403,19 +403,6 @@ class MyAgent(BaseAgent):
 - **Alembic** - Database migrations
 - **Docker** - Containerization
 
-## Roadmap (Next Improvements)
-
-- [ ] Scrapling integration for advanced web fetching
-- [ ] Adaptive element tracking for resilient content scraping
-- [ ] Multi-session spider support with proxy rotation
-- [ ] Cloudflare/anti-bot bypass for protected sites
-- [ ] LangGraph checkpointing for long-running sessions
-- [ ] LangSmith observability integration
-- [ ] Celery/Temporal for distributed task queues
-- [ ] Web dashboard for monitoring
-- [ ] Multi-tenant support
-- [ ] Advanced analytics
-
 ## License
 
 MIT License - See LICENSE file for details
