@@ -187,7 +187,7 @@ class DeepResearchWorkflow:
         try:
             logger.info("Starting deep research workflow")
             import asyncio
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.graph.ainvoke(
                     initial_state,
                     config={

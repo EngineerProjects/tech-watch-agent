@@ -472,7 +472,14 @@ class DeepResearchNodes:
             logger.info("Max research iterations reached (%d). Stopping.", research_iterations)
             return Command(goto="__end__")
 
-        supervisor_messages = state.get("supervisor_messages", [])
+        # Handle override reducer format - may be dict with "type": "override"
+        raw_messages = state.get("supervisor_messages", [])
+        if isinstance(raw_messages, dict) and raw_messages.get("type") == "override":
+            supervisor_messages = raw_messages.get("value", [])
+        elif isinstance(raw_messages, list):
+            supervisor_messages = raw_messages
+        else:
+            supervisor_messages = []
         
         class SupervisorDecision(BaseModel):
             """Decision taken by the lead researcher."""
@@ -539,8 +546,9 @@ class DeepResearchNodes:
             for result in research_results:
                 if result.get("compressed_research"):
                     notes.append(result["compressed_research"])
-                if result.get("raw_notes"):
-                    raw_notes.extend(result["raw_notes"])
+                raw_notes_data = result.get("raw_notes") or []
+                if raw_notes_data:
+                    raw_notes.extend(raw_notes_data)
 
             return Command(
                 goto="supervisor",

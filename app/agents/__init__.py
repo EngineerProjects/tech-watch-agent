@@ -35,6 +35,7 @@ def initialize_agents() -> None:
     agents available for orchestration.
     """
     from app.agents.deep_research.agent import create_deep_research_agent
+    from app.agents.newsletter.agent import create_newsletter_agent
 
     # Register deep_research agent
     deep_research = create_deep_research_agent()
@@ -48,5 +49,20 @@ def initialize_agents() -> None:
             supports_async=True,
             supports_parallel=True,
             max_execution_time_seconds=600,
+        ),
+    )
+
+    # Register newsletter agent (legacy V1)
+    newsletter = create_newsletter_agent()
+    register_agent(
+        name="newsletter",
+        agent=newsletter,
+        metadata=AgentMetadata(
+            name="newsletter",
+            description="Newsletter generation agent for periodic tech summaries",
+            category="synthesis",
+            supports_async=True,
+            supports_parallel=False,
+            max_execution_time_seconds=300,
         ),
     )
