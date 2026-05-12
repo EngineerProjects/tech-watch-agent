@@ -36,9 +36,9 @@
 5. **Identifier les améliorations potentielles**
 
 ### Prochaines étapes (à définir après audit)
-- Amélioration de la mémoire/RAG
+- Amélioration de la mémoire/RAG (déjà fait, mais si possible à améliorer)
 - Multi-utilisateurs
-- Workflows complexes
+- Workflows complexes (déjà fait, mais si possible à améliorer)
 - Amélioration des prompts pour avoir de meilleures réponses.
 - Dashboard web
 
