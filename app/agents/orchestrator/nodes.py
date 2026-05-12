@@ -211,6 +211,9 @@ class OrchestratorNodes:
     - Fallback chain (try multiple tools if one fails)
     - Error aggregation with detailed logging
     - LLM health monitoring with auto-fallback
+    - Session persistence with plan versioning
+    - Memory compaction to avoid context limits
+    - Checkpoint/resume for interrupted sessions
     """
 
     def __init__(
@@ -219,6 +222,8 @@ class OrchestratorNodes:
         max_articles: int = 5,
         min_sources: int = 2,
         health_manager: Optional[LLMHealthManager] = None,
+        session_id: Optional[str] = None,
+        enable_session_persistence: bool = True,
     ) -> None:
         self._llm_client = llm_client
         self._max_articles = max_articles
@@ -226,6 +231,9 @@ class OrchestratorNodes:
         self._registry = get_global_registry()
         self._deep_research_agent = None
         self._health_manager = health_manager or get_health_manager()
+        self._session_manager = None
+        self._session_id = session_id
+        self._enable_persistence = enable_session_persistence
 
     def _client(self) -> ChatCompletionClient:
         if self._llm_client is None:
@@ -257,6 +265,177 @@ class OrchestratorNodes:
             logger.warning("Health check failed: %s. Using default provider.", exc)
             return self._health_manager.active_provider
         return self._llm_client
+
+    async def _init_session_manager(self, state: OrchestratorState) -> None:
+        """Initialize session manager for this session.
+        
+        Args:
+            state: Current orchestrator state
+        """
+        if not self._enable_persistence:
+            return
+            
+        if self._session_manager is not None:
+            return
+            
+        try:
+            from app.services.session_manager import SessionManager
+            
+            task_id = state.get("task_id")
+            if task_id:
+                session_uuid = uuid.UUID(task_id.replace("orch_", "")[:36])
+                self._session_manager = SessionManager(session_uuid)
+                await self._session_manager.initialize()
+                logger.info("Session manager initialized for: %s", task_id)
+        except Exception as exc:
+            logger.warning("Failed to initialize session manager: %s", exc)
+            self._session_manager = None
+
+    async def _save_phase(
+        self, 
+        state: OrchestratorState, 
+        phase: str,
+        reason: str = "phase_transition",
+    ) -> None:
+        """Save session state at phase transition.
+        
+        Args:
+            state: Current orchestrator state
+            phase: New phase name
+            reason: Reason for save
+        """
+        if not self._enable_persistence or self._session_manager is None:
+            return
+            
+        try:
+            await self._init_session_manager(state)
+            
+            if self._session_manager is None:
+                return
+                
+            from app.services.session_manager import SessionPhase
+            session_phase = SessionPhase(phase) if phase in [p.value for p in SessionPhase] else SessionPhase.RESEARCH
+            
+            await self._session_manager.save_phase(
+                phase=session_phase,
+                plan=state.get("plan", []),
+                current_step_index=state.get("current_step_index", 0),
+                reason=reason,
+            )
+        except Exception as exc:
+            logger.warning("Failed to save phase: %s", exc)
+
+    async def _create_checkpoint(
+        self,
+        state: OrchestratorState,
+        phase: str,
+    ) -> str:
+        """Create a checkpoint for resumable state.
+        
+        Args:
+            state: Current orchestrator state
+            phase: Current phase
+            
+        Returns:
+            Checkpoint ID or empty string
+        """
+        if not self._enable_persistence or self._session_manager is None:
+            return ""
+            
+        try:
+            await self._init_session_manager(state)
+            
+            if self._session_manager is None:
+                return ""
+                
+            from app.services.session_manager import SessionPhase
+            session_phase = SessionPhase(phase) if phase in [p.value for p in SessionPhase] else SessionPhase.RESEARCH
+            
+            checkpoint_id = await self._session_manager.create_checkpoint(
+                phase=session_phase,
+                state_snapshot=dict(state),
+                articles=state.get("articles", []),
+                results=state.get("research_results", []),
+            )
+            return checkpoint_id
+        except Exception as exc:
+            logger.warning("Failed to create checkpoint: %s", exc)
+            return ""
+
+    async def _compact_memory(
+        self,
+        state: OrchestratorState,
+        reason: str = "phase_transition",
+    ) -> None:
+        """Compact agent memory to avoid context limits.
+        
+        This does NOT compact articles (kept full for RAG).
+        
+        Args:
+            state: Current orchestrator state
+            reason: Reason for compaction
+        """
+        if not self._enable_persistence or self._session_manager is None:
+            return
+            
+        try:
+            await self._init_session_manager(state)
+            
+            if self._session_manager is None:
+                return
+                
+            from app.services.session_manager import CompactionReason
+            
+            compaction_reason = CompactionReason(reason)
+            result = await self._session_manager.compact_memory(state, compaction_reason)
+            
+            if result.success and result.compression_ratio > 0:
+                logger.info(
+                    "Memory compacted: original=%d, compacted=%d, ratio=%.1f%%",
+                    result.original_size, result.compacted_size, result.compression_ratio * 100
+                )
+        except Exception as exc:
+            logger.warning("Failed to compact memory: %s", exc)
+
+    async def _try_resume_from_checkpoint(self, state: OrchestratorState) -> OrchestratorState:
+        """Try to resume session from checkpoint.
+        
+        Args:
+            state: Current orchestrator state
+            
+        Returns:
+            Updated state with checkpoint data, or original state if no checkpoint
+        """
+        if not self._enable_persistence:
+            return state
+            
+        try:
+            await self._init_session_manager(state)
+            
+            if self._session_manager is None:
+                return state
+                
+            checkpoint = await self._session_manager.resume_from_checkpoint()
+            
+            if checkpoint:
+                logger.info(
+                    "Resuming from checkpoint: phase=%s, index=%d",
+                    checkpoint["phase"], checkpoint["checkpoint_index"]
+                )
+                
+                # Restore state from checkpoint
+                if checkpoint.get("state_snapshot"):
+                    snapshot = checkpoint["state_snapshot"]
+                    state["plan"] = snapshot.get("plan", state.get("plan", []))
+                    state["current_step_index"] = checkpoint["checkpoint_index"]
+                    state["research_results"] = checkpoint.get("results_snapshot", [])
+                    state["articles"] = checkpoint.get("articles_snapshot", [])
+                    state["resumed_from_checkpoint"] = True
+                    
+        except Exception as exc:
+            logger.warning("Failed to resume from checkpoint: %s", exc)
+            
+        return state
 
     def _get_deep_research_agent(self):
         if self._deep_research_agent is None:
@@ -404,6 +583,9 @@ Rules:
             state["started_at"] = datetime.now().isoformat()
             state["plan_attempts"] = 0  # Reset on success
             logger.info("Planner generated %d steps", len(plan))
+            
+            # Save plan to session (phase: plan)
+            await self._save_phase(state, "plan", "plan_created")
 
         except Exception as exc:
             logger.error("Planner failed: %s (attempt %d/%d)", 
@@ -775,6 +957,13 @@ Rules:
             logger.info("Collector aggregated %d result sets", len(research_results))
 
             await self._persist_articles(articles_to_store)
+            
+            # Save checkpoint after research phase
+            await self._save_phase(state, "collection", "research_completed")
+            
+            # Create checkpoint and compact memory before analysis
+            await self._create_checkpoint(state, "research")
+            await self._compact_memory(state, "research_completed")
 
         except Exception as exc:
             logger.error("Collector failed: %s", exc)
@@ -1126,6 +1315,12 @@ Rules:
             logger.info("Synthesizer completed report (%d chars)", len(report))
 
             await self._persist_research_session(state, task)
+            
+            # Save final phase (synthesis completed)
+            await self._save_phase(state, "synthesis", "report_generated")
+            
+            # Final checkpoint
+            await self._create_checkpoint(state, "synthesis")
 
         except Exception as exc:
             logger.error("Synthesizer failed: %s", exc)

@@ -302,6 +302,12 @@ class ResearchSession(Base):
 
     Tracks deep research sessions with their status, findings, and metadata.
     Enables resuming research and tracking research history.
+    
+    Features:
+    - Plan persistence: Full execution plan stored and updated
+    - Versioning: Track plan revisions with reasons
+    - Checkpointing: Resume interrupted sessions
+    - Phase tracking: PLAN → RESEARCH → SYNTHESIS → COMPLETED
     """
 
     __tablename__ = "research_sessions"
@@ -319,20 +325,105 @@ class ResearchSession(Base):
     )
     research_brief: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(50), index=True)
+    phase: Mapped[str] = mapped_column(String(50), default="plan", index=True)
     final_report: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     notes: Mapped[list] = mapped_column(JSONType(), default=list)
     raw_notes: Mapped[list] = mapped_column(JSONType(), default=list)
     meta_data: Mapped[dict] = mapped_column(JSONType(), default=dict)
     iterations_count: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Plan persistence fields
+    plan: Mapped[dict] = mapped_column(JSONType(), default=dict)
+    plan_version: Mapped[int] = mapped_column(Integer, default=0)
+    current_step_index: Mapped[int] = mapped_column(Integer, default=0)
+    research_results: Mapped[list] = mapped_column(JSONType(), default=list)
+    analysis_results: Mapped[str] = mapped_column(Text, nullable=True)
+    
+    # Memory compaction (for agent context management)
+    compacted_memory: Mapped[dict] = mapped_column(JSONType(), default=dict)
+    compaction_version: Mapped[int] = mapped_column(Integer, default=0)
+    
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         index=True,
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:
-        return f"<ResearchSession(id={self.id}, status={self.status})>"
+        return f"<ResearchSession(id={self.id}, status={self.status}, phase={self.phase})>"
+
+
+class PlanVersion(Base):
+    """Version history for research session plans.
+    
+    Tracks all plan versions with reasons for revision.
+    Enables rollback and audit trail of plan evolution.
+    """
+
+    __tablename__ = "plan_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("research_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    plan: Mapped[dict] = mapped_column(JSONType())
+    reason: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PlanVersion(session={self.session_id}, version={self.version})>"
+
+
+class SessionCheckpoint(Base):
+    """Checkpoint for resumable session state.
+    
+    Stores full state at each phase transition for recovery.
+    Enables resuming interrupted sessions from exact point.
+    """
+
+    __tablename__ = "session_checkpoints"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("research_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    phase: Mapped[str] = mapped_column(String(50), nullable=False)
+    checkpoint_index: Mapped[int] = mapped_column(Integer, default=0)
+    state_snapshot: Mapped[dict] = mapped_column(JSONType())
+    articles_snapshot: Mapped[list] = mapped_column(JSONType(), default=list)
+    results_snapshot: Mapped[list] = mapped_column(JSONType(), default=list)
+    is_latest: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SessionCheckpoint(session={self.session_id}, phase={self.phase}, latest={self.is_latest})>"
 
 
 class ToolExecution(Base):

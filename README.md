@@ -52,6 +52,16 @@ All core capabilities are implemented, tested, and functional:
    - Automatic fallback to healthy providers (Z.ai → Ollama → OpenRouter)
    - Provider status tracking (healthy/degraded/unhealthy)
    - Integration in OrchestratorNodes for pre-execution checks
+7. **Session Persistence & Plan Versioning** (NEW)
+   - Plan persistence at each phase transition (PLAN → RESEARCH → SYNTHESIS)
+   - `PlanVersion` model tracks all plan revisions with audit trail
+   - `SessionCheckpoint` for resumable interrupted sessions
+   - `app/services/session_manager.py` provides unified session management
+8. **Memory Compaction** (NEW)
+   - Automatic compaction to avoid LLM context limits
+   - Compacts working memory, NOT articles (kept full for RAG)
+   - Summarizes research results while preserving raw data
+   - Triggers at configurable thresholds (50K chars default)
 
 ### Known Issues
 - LLM network errors with Z.ai provider (glm-4.5-flash) - system auto-fallbacks to Ollama
