@@ -84,6 +84,7 @@ class OrchestratorRequest(BaseModel):
     topics: Optional[list[str]] = None
     send_email: bool = True
     mode: str = "v2"
+    autonomous: bool = True
 
 class OrchestratorResponse(BaseModel):
     success: bool
@@ -93,6 +94,8 @@ class OrchestratorResponse(BaseModel):
     research_results_count: int = 0
     plan_steps: int = 0
     execution_time: Optional[float] = None
+    quality_score: Optional[float] = None
+    approval_status: Optional[str] = None
     errors: list[str] = Field(default_factory=list)
 
 class ProviderHealthResponse(BaseModel):

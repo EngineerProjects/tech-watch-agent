@@ -87,3 +87,5 @@ class OrchestratorState(TypedDict, total=False):
     approved_at: str | None
     started_at: str | None
     completed_at: str | None
+    approval_threshold: float
+    autonomous: bool

@@ -152,6 +152,7 @@ class OrchestratorGraphBuilder:
             {
                 "proceed": "analyzer",
                 "retry": "dispatcher",
+                "bypass": "analyzer",
             }
         )
 
@@ -180,8 +181,13 @@ class OrchestratorGraphBuilder:
             return "retry"
         return "approval"
 
-    def _route_after_approval(self, state: OrchestratorState) -> Literal["proceed", "retry"]:
+    def _route_after_approval(self, state: OrchestratorState) -> Literal["proceed", "retry", "bypass"]:
         approval_result = state.get("approval_result", "pending")
+        autonomous = state.get("autonomous", False)
+
+        if autonomous:
+            return "bypass"
+
         if approval_result == "approved":
             return "proceed"
         return "retry"

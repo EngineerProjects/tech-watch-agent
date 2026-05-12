@@ -147,6 +147,7 @@ class OrchestratorAgent(BaseAgent):
                 "started_at": None,
                 "completed_at": None,
                 "approval_threshold": self._config.approval_threshold,
+                "autonomous": self._config.autonomous,
             })
 
             execution_time = (datetime.now() - start_time).total_seconds()

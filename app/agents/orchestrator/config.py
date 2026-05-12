@@ -22,7 +22,13 @@ class OrchestratorConfig(AgentConfig):
     - parallel_research: Enable parallel tool dispatch
     - send_email: Enable email delivery
     - checkpointing: Enable state persistence
-    - human_approval: Enable human-in-the-loop checkpoints
+    - human_approval: Enable human-in-the-loop checkpoints (chat mode)
+    - autonomous: Enable fully autonomous mode (bypass all human approval)
+
+    Mode Summary:
+    - autonomous=True: No human approval, runs fully automated (for scheduling)
+    - autonomous=False + human_approval=True: Full human-in-the-loop (chat mode)
+    - autonomous=False + human_approval=False: Auto-approval for quality content
     """
 
     name: str = "OrchestratorAgent"
@@ -40,6 +46,10 @@ class OrchestratorConfig(AgentConfig):
     topics: list[str] = field(default_factory=list)
     custom_sources: list[str] = field(default_factory=list)
 
+    autonomous: bool = False
+    human_approval_enabled: bool = False
+    approval_threshold: float = 0.7
+
     enable_checkpointing: bool = False
     checkpoint_backend: Literal["memory", "postgres"] = "memory"
     retry_policy: RetryPolicy = field(default_factory=lambda: {
@@ -48,8 +58,6 @@ class OrchestratorConfig(AgentConfig):
         "backoff_factor": 2.0,
         "max_interval": 60.0,
     })
-    human_approval_enabled: bool = False
-    approval_threshold: float = 0.7
 
     def __post_init__(self) -> None:
         if not self.model:

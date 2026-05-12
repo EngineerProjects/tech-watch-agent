@@ -53,7 +53,47 @@ The following issues were identified and fixed during the Phase 1 audit:
 ### Core Agents
 - **Orchestrator Agent** (V2): Central planner that decomposes tasks into execution plans, dispatches research in parallel across multiple tools, collects/validates results, analyzes, synthesizes reports, and delivers via email. Uses LangGraph StateGraph with supervisor pattern.
 - **Deep Research Agent**: Multi-agent supervisor-researcher pattern for in-depth investigations. Supports clarification loops, parallel research units, and citation tracking.
-- **Newsletter Agent** (V1): Automated newsletter generation from collected articles. Linear pipeline: researcher → analyst → opinion_writer → editor.
+- **Newsletter Agent** (V1): Automated newsletter generation from collected articles. Linear pipeline with quality-based routing.
+
+### Dual-Mode Architecture
+
+The orchestrator supports two execution modes:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Autonomous** | Fully automated, no human approval | Scheduled newsletters (e.g., 2x/week) |
+| **Interactive** | Human-in-the-loop for approval | On-demand research with review |
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    DUAL-MODE ARCHITECTURE                          │
+└─────────────────────────────────────────────────────────────────────┘
+
+   SCHEDULER (Cron-like)              API (On-demand)
+        │                                  │
+        ▼                                  ▼
+┌───────────────────┐            ┌───────────────────┐
+│ autonomous=True  │            │ autonomous=False  │
+│ • No approval    │            │ • Human approval   │
+│ • Auto email     │            │ • Review before   │
+│ • 2x/week config │            │   send            │
+└───────────────────┘            └───────────────────┘
+        │                                  │
+        └──────────────┬───────────────────┘
+                      ▼
+            ┌─────────────────────┐
+            │  OrchestratorAgent   │
+            │  + OrchestratorGraph │
+            └─────────────────────┘
+                      │
+                      ▼
+            ┌─────────────────────┐
+            │ Quality-based Flow   │
+            │ • Retry policies    │
+            │ • Fallback chains   │
+            │ • Checkpointing     │
+            └─────────────────────┘
+```
 
 ### Monitoring Tools
 - **GitHub**: Repository search, trending repos, commit tracking, issues
