@@ -33,6 +33,7 @@ htmlcov/
 
 # Documentation
 *.md
+!README.md
 docs/
 
 # Docker

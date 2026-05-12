@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -76,7 +76,8 @@ jobs:
 
       - name: Run tests
         run: |
-          export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/techwatch_test
+          export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch_test
+          export DATABASE_SYNC_URL=postgresql://postgres:postgres@localhost:5432/techwatch_test
           pytest tests/ -v --cov=app --cov-report=xml
 
       - name: Upload coverage
@@ -157,7 +158,6 @@ jobs:
       - name: Create .env file
         run: |
           cp docker/env.docker .env
-          echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/techwatch_test" >> .env
 
       - name: Pull images
         run: |
@@ -179,11 +179,17 @@ jobs:
       - name: Start API
         run: |
           docker compose -f docker/docker-compose.yml up -d api
-          sleep 30
 
       - name: Health check
         run: |
-          curl -f http://localhost:8000/health || exit 1
+          for attempt in {1..12}; do
+            if curl -fsS http://localhost:8000/health; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose -f docker/docker-compose.yml logs api
+          exit 1
 
       - name: Stop services
         if: always()

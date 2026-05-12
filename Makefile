@@ -63,4 +63,4 @@ health: ## Check service health
 
 # Shell
 shell: ## Open shell in API container
-	docker compose -f docker/docker-compose.yml exec api /bin/bash
+	docker compose -f docker/docker-compose.yml exec api /bin/sh

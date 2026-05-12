@@ -151,7 +151,7 @@ nano .env
 docker compose -f docker/docker-compose.yml up
 
 # Or start just the API
-docker compose -f docker/docker-compose.yml up tech-watch-api
+docker compose -f docker/docker-compose.yml up api
 ```
 
 ### 3. Local Development
@@ -183,6 +183,7 @@ Edit `.env` file with your settings:
 ```env
 # Database
 DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5433/techwatch
+DATABASE_SYNC_URL=postgresql://postgres:postgres@localhost:5433/techwatch
 
 # LLM Provider (multi-provider support)
 LLM_PROVIDER=openrouter     # openrouter, ollama, zai, openai
@@ -196,6 +197,8 @@ NEWSLETTER_TOPICS=AI news,Machine Learning,Tech startups
 SENDER_EMAIL=your-email@gmail.com
 RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 ```
+
+For Docker, keep `.env` at the repository root. Gmail OAuth files are no longer mounted by default; if you need email delivery from containers, either add a compose override that mounts `credentials.json` and `token.json`, or point `GMAIL_CREDENTIALS_PATH` / `GMAIL_TOKEN_PATH` to mounted paths explicitly.
 
 ### Available LLM Providers
 

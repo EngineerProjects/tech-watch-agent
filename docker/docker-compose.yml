@@ -19,6 +19,8 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      - tech-watch-network
 
   # Redis for caching and task queue
   redis:
@@ -34,6 +36,8 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      - tech-watch-network
 
   # FastAPI application server
   api:
@@ -45,7 +49,7 @@ services:
     image: tech-watch-agent:latest
     container_name: tech-watch-api
     env_file:
-      - path: .env
+      - path: ../.env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
@@ -58,8 +62,6 @@ services:
         condition: service_healthy
     volumes:
       - logs_data:/app/logs
-      - ./credentials.json:/app/credentials.json:ro
-      - ./token.json:/app/token.json
     ports:
       - "8000:8000"
     healthcheck:
@@ -76,6 +78,8 @@ services:
         python -m app.main --mode api
       "
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - tech-watch-network
 
@@ -87,17 +91,19 @@ services:
     image: tech-watch-agent:latest
     container_name: tech-watch-once
     env_file:
-      - path: .env
+      - path: ../.env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
+      DATABASE_SYNC_URL: postgresql://postgres:postgres@postgres:5432/techwatch
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - logs_data:/app/logs
-      - ./credentials.json:/app/credentials.json:ro
-      - ./token.json:/app/token.json
     command: >
       sh -c "
         alembic upgrade head &&
@@ -105,6 +111,8 @@ services:
       "
     profiles:
       - manual
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - tech-watch-network
 
@@ -116,17 +124,19 @@ services:
     image: tech-watch-agent:latest
     container_name: tech-watch-scheduler
     env_file:
-      - path: .env
+      - path: ../.env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
+      DATABASE_SYNC_URL: postgresql://postgres:postgres@postgres:5432/techwatch
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - logs_data:/app/logs
-      - ./credentials.json:/app/credentials.json:ro
-      - ./token.json:/app/token.json
     command: >
       sh -c "
         alembic upgrade head &&
@@ -135,6 +145,8 @@ services:
     profiles:
       - scheduler
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - tech-watch-network
 
