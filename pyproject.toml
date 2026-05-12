@@ -12,6 +12,7 @@ dependencies = [
     "alembic>=1.13.0,<2",
     "beautifulsoup4>=4.12.2,<5",
     "crawl4ai>=0.7.2,<0.8",
+    "email-validator>=2.1.0,<3",
     "fastapi>=0.104.1,<1",
     "feedparser>=6.0.10,<7",
     "google-api-python-client>=2.108.0,<3",

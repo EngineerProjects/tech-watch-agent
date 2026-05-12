@@ -352,7 +352,12 @@ class VectorStore:
                 text("""
                     SELECT
                         COUNT(*) as total_vectors,
-                        AVG(LENGTH(embedding)) as avg_embedding_size,
+                        AVG(
+                            CASE
+                                WHEN embedding IS NULL THEN NULL
+                                ELSE jsonb_array_length(embedding)
+                            END
+                        ) as avg_embedding_size,
                         MIN(created_at) as oldest,
                         MAX(created_at) as newest
                     FROM article_embeddings

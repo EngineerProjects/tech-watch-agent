@@ -1,66 +1,163 @@
-# Tech Watch Agent - Makefile for Docker operations
+# Tech Watch Agent - Developer Makefile
 
-.PHONY: help build up down logs ps clean test docker-build
+.DEFAULT_GOAL := help
 
-help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+COMPOSE_FILE ?= docker/docker-compose.yml
+COMPOSE := docker compose -f $(COMPOSE_FILE)
+SERVICE ?= api
+PYTHON ?= python3
+PYTEST ?= pytest
+RUFF ?= ruff
+MYPY ?= mypy
 
-# Docker operations
+.PHONY: help install build rebuild docker-build up up-build down destroy restart logs ps config \
+	dev-api dev-once dev-scheduler shell health doctor \
+	test test-unit test-integration test-cov test-docker lint lint-fix format typecheck check \
+	db-migrate db-downgrade db-history db-current db-reset \
+	clean clean-py clean-test clean-build clean-logs clean-docker clean-docker-cache \
+	clean-images clean-volumes clean-networks clean-system nuke
+
+help: ## Show available commands
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
+install: ## Install project dependencies locally
+	pip install -e .
+
+config: ## Validate Docker Compose configuration
+	$(COMPOSE) config
+
 build: ## Build Docker images
-	docker compose -f docker/docker-compose.yml build
+	$(COMPOSE) build
+
+rebuild: ## Rebuild Docker images without cache
+	$(COMPOSE) build --no-cache
 
 docker-build: ## Build and push Docker image to registry
 	docker build -t tech-watch-agent:latest -f docker/Dockerfile .
 	docker tag tech-watch-agent:latest ghcr.io/$(shell gh repo view --json owner,repo --jq '.owner.login + "/" + .repo.name'):latest
 	docker push ghcr.io/$(shell gh repo view --json owner,repo --jq '.owner.login + "/" + .repo.name'):latest
 
-up: ## Start all services
-	docker compose -f docker/docker-compose.yml up -d
+up: ## Start core services in detached mode
+	$(COMPOSE) up -d
 
-down: ## Stop all services
-	docker compose -f docker/docker-compose.yml down
+up-build: ## Build and start services
+	$(COMPOSE) up -d --build
 
-logs: ## Show logs (use: make logs SERVICE=api)
-	docker compose -f docker/docker-compose.yml logs -f $(SERVICE)
+down: ## Stop services without removing volumes
+	$(COMPOSE) down
 
-ps: ## Show running containers
-	docker compose -f docker/docker-compose.yml ps
+destroy: ## Stop services and remove volumes/orphans
+	$(COMPOSE) down -v --remove-orphans
 
-clean: ## Clean up volumes and containers
-	docker compose -f docker/docker-compose.yml down -v --remove-orphans
-	docker system prune -f
+restart: ## Restart a service (use: make restart SERVICE=api)
+	$(COMPOSE) restart $(SERVICE)
 
-restart: ## Restart services (use: make restart SERVICE=api)
-	docker compose -f docker/docker-compose.yml restart $(SERVICE)
+logs: ## Show logs for a service (use: make logs SERVICE=api)
+	$(COMPOSE) logs -f $(SERVICE)
 
-# Development
-dev-api: ## Start API in development mode
-	docker compose -f docker/docker-compose.yml up -d api
+ps: ## Show running compose services
+	$(COMPOSE) ps
 
-dev-once: ## Run once mode
-	docker compose -f docker/docker-compose.yml --profile manual up once
+dev-api: ## Start only the API service
+	$(COMPOSE) up -d api
 
-dev-scheduler: ## Start scheduler
-	docker compose -f docker/docker-compose.yml --profile scheduler up -d scheduler
+dev-once: ## Run one-shot newsletter generation
+	$(COMPOSE) --profile manual up once
 
-# Testing
+dev-scheduler: ## Start the scheduler profile
+	$(COMPOSE) --profile scheduler up -d scheduler
+
+shell: ## Open a shell in the API container
+	$(COMPOSE) exec api /bin/sh
+
+health: ## Check API health endpoint
+	@curl -fsS http://localhost:8000/health | jq . || echo "API not responding"
+
+doctor: ## Show compose status and recent API logs
+	$(COMPOSE) ps
+	$(COMPOSE) logs --tail=100 api
+
+lint: ## Run Ruff linter
+	$(RUFF) check .
+
+lint-fix: ## Run Ruff with automatic fixes
+	$(RUFF) check . --fix
+
+format: ## Format Python code with Ruff
+	$(RUFF) format .
+
+typecheck: ## Run mypy on the app package
+	$(MYPY) app/ --ignore-missing-imports
+
+check: ## Run lint, typecheck, and unit tests
+	$(MAKE) lint
+	$(MAKE) typecheck
+	$(MAKE) test-unit
+
+test: test-unit ## Alias for unit test suite
+
+test-unit: ## Run the main pytest suite
+	$(PYTEST) tests/ -v
+
+test-integration: ## Run orchestrator integration tests
+	$(PYTEST) tests/test_orchestrator_integration.py -v
+
+test-cov: ## Run pytest with coverage
+	$(PYTEST) tests/ -v --cov=app --cov-report=term-missing
+
 test-docker: ## Run tests in Docker
-	docker compose -f docker/docker-compose.yml run --rm api pytest tests/
+	$(COMPOSE) run --rm api pytest tests/
 
-# Database
-db-migrate: ## Run database migrations
-	docker compose -f docker/docker-compose.yml exec api alembic upgrade head
+db-migrate: ## Apply Alembic migrations to head
+	alembic upgrade head
 
-db-reset: ## Reset database (WARNING: destroys data)
-	docker compose -f docker/docker-compose.yml down -v
-	docker compose -f docker/docker-compose.yml up -d postgres
+db-downgrade: ## Roll back one Alembic revision
+	alembic downgrade -1
+
+db-history: ## Show Alembic migration history
+	alembic history
+
+db-current: ## Show current Alembic revision
+	alembic current
+
+db-reset: ## Reset database containers and restart API (destroys DB data)
+	$(COMPOSE) down -v
+	$(COMPOSE) up -d postgres redis
 	sleep 5
-	docker compose -f docker/docker-compose.yml up -d api
+	$(COMPOSE) up -d api
 
-# Health
-health: ## Check service health
-	@curl -s http://localhost:8000/health | jq . || echo "API not responding"
+clean: clean-py clean-test clean-build ## Clean local Python, test, and build artifacts
 
-# Shell
-shell: ## Open shell in API container
-	docker compose -f docker/docker-compose.yml exec api /bin/sh
+clean-py: ## Remove Python caches and bytecode
+	find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+	find . -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete
+
+clean-test: ## Remove pytest, coverage, mypy, and Ruff caches
+	rm -rf .pytest_cache .coverage htmlcov .mypy_cache .ruff_cache .tox .nox
+
+clean-build: ## Remove packaging artifacts
+	rm -rf build dist .eggs
+	find . -type d -name "*.egg-info" -prune -exec rm -rf {} +
+
+clean-logs: ## Remove local log directory contents if present
+	rm -rf logs
+
+clean-docker: ## Remove compose services, volumes, and orphans
+	$(COMPOSE) down -v --remove-orphans
+
+clean-docker-cache: ## Remove Docker build cache
+	docker builder prune -af
+
+clean-images: ## Remove dangling and unused Docker images
+	docker image prune -af
+
+clean-volumes: ## Remove unused Docker volumes
+	docker volume prune -f
+
+clean-networks: ## Remove unused Docker networks
+	docker network prune -f
+
+clean-system: ## Remove unused Docker containers, images, cache, and volumes
+	docker system prune -af --volumes
+
+nuke: clean clean-logs clean-docker clean-docker-cache clean-system ## Full local and Docker cleanup

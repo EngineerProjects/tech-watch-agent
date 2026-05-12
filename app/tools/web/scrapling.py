@@ -331,7 +331,7 @@ Output is stripped of all noise and formatted as clean {self._output_format}.
             elif re.match(r"^[\*\-]\s", stripped) or re.match(r"^\d+\.\s", stripped):
                 result.append(stripped)
             elif re.match(r"^\"[^\"]+\"$|^[^\"]+\"$", stripped):
-                result.append(f"> {stripped.strip('\"')}")
+                result.append("> " + stripped.strip('"'))
             elif len(stripped) > 80 and not result[-1].startswith("#") if result else False:
                 result.append(f"\n{stripped}\n")
             else:
