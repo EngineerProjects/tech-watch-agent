@@ -11,36 +11,51 @@
 - **Deep Research** : Agent de recherche profonde (version simplifiée fonctionnelle)
 - **Newsletter Agent** : Agent V1 legacy pour génération de newsletters
 
+#### Session Persistence & Memory
+- **SessionManager** : Persistence par phase (PLAN → RESEARCH → SYNTHESIS)
+- **PlanVersion** : Audit trail pour toutes les révisions de plan
+- **SessionCheckpoint** : Resume pour sessions interrompues
+- **Memory Compaction** : Compacte la mémoire de travail (NOT articles pour RAG)
+
 #### Configuration LLM
-- **Z.ai** : Provider gratuit configuré (glm-4.5-flash)
+- **Multi-provider** : OpenRouter, Ollama, Z.ai, OpenAI
+- **LLMHealthManager** : Auto-fallback automatique (Z.ai → Ollama → OpenRouter)
 - **Fix parsing** : Support de `reasoning_content` pour les modèles Z.ai
 
 #### Tests
-- **18 tests unitaires** pour AgentRegistry - tous passent
+- **145+ tests unitaires** - tous passent
+- **25 integration tests** pour l'orchestrateur - tous passent
 
 #### Intégrations outils
-- **Tools registry** : Système de plugins extensible
-- **Web tools** : Search, Crawl4AI, Scrapling, OpenAlex
-- **Social tools** : GitHub, Reddit, ArXiv, Research Papers
-- **Tools disponibles** : 10+ outils enregistrés
+- **Tools registry** : Système de plugins extensible avec catégories
+- **Web tools** : Search, Crawl4AI, Scrapling, OpenAlex, PDF Downloader
+- **Social tools** : GitHub, Reddit, ArXiv, Research Papers, YouTube
+- **Delivery tools** : EmailTool, EmailPreviewTool (Gmail)
+- **Tools disponibles** : 15+ outils enregistrés
+
+#### API Endpoints (25+)
+- **Session Resume** : 7 endpoints pour gestion et resume de sessions
+- **Orchestrator** : Run pipeline complet, gestion des tâches
+- **Newsletter** : Génération et historique
+- **Deep Research** : Sessions de recherche approfondie
+- **LLM Providers** : Health checks et switching runtime
+
+#### Prompts Enhancés
+- **Claude Code-inspired** : Meilleure coordination et définitions de rôles
+- **Strict JSON validation** : Plan mode strict avec 3 retry attempts
+- **Valid tool names** : Liste explicite pour éviter les noms invalides
+- **Conflict detection** : group_parallel_steps, analyze_step_dependencies
 
 ---
 
 ## Objectifs actuels
 
-### Phase 1: Audit et test
-1. **Audit du code** : Analyser l'existant pour identifier les problèmes
-2. **Tests réels** : Exécuter des workflows complets et observer le comportement
-3. **Corrections** : Identifier et corriger les bugs/mauvaises pratiques
-4. **Mettre à jour le readme** : Mettre à jour le readme avec les informations actuelles, ce qui est déjà fait, et ce qui reste à faire.
-5. **Identifier les améliorations potentielles**
+### En cours
+- [ ] **Docker integration** : CI/CD avec GitHub Actions + Docker Compose
 
 ### Prochaines étapes (à définir après audit)
-- Amélioration de la mémoire/RAG (déjà fait, mais si possible à améliorer)
-- Multi-utilisateurs
-- Workflows complexes (déjà fait, mais si possible à améliorer)
-- Amélioration des prompts pour avoir de meilleures réponses.
-- Dashboard web
+- [ ] Dashboard web - FastAPI interface pour sessions, reports, stats
+- [ ] Multi-utilisateurs - Auth, topics personalisés, permissions
 
 ---
 
@@ -50,6 +65,7 @@
 - **PostgreSQL** + pgvector / Redis
 - **Docker** configuré
 - **LLM**: Z.ai (gratuit) ou OpenRouter
+- **CI/CD**: GitHub Actions
 
 ---
 
@@ -60,18 +76,18 @@
 3. **Tests en premier** pour valider les fonctionnalités
 4. **Architecture modulaire** à maintenir
 5. **Code production-ready** : typé, documenté, testable
+6. **Ne pas compacter les articles** : Garder les articles complets pour RAG
 
 ---
 
-## Commande de test
+## Commandes de test
 
 ```bash
-# Test deep research simple
-python -c "
-import asyncio
-from app.agents.deep_research.simple_agent import create_simple_deep_research_agent
-asyncio.run(create_simple_deep_research_agent().execute({'query': 'Test'}))
-"
+# Tests unitaires
+pytest tests/ -v
+
+# Tests integration orchestrateur
+pytest tests/test_orchestrator_integration.py -v
 
 # Test orchestrateur
 python -c "
@@ -82,3 +98,16 @@ initialize_agents()
 asyncio.run(create_orchestrator_agent().execute({'task': 'Test', 'send_email': False}))
 "
 ```
+
+---
+
+## Fichiers clés
+
+| Fichier | Description |
+|---------|-------------|
+| `app/agents/orchestrator/nodes.py` | Orchestrateur avec session persistence |
+| `app/services/session_manager.py` | Session management avec versioning/checkpoint |
+| `app/api/routers/sessions.py` | Session resume API endpoints |
+| `app/agents/orchestrator/prompts.py` | Prompts enhancés (Claude Code-inspired) |
+| `app/services/llm/health.py` | LLM health manager avec auto-fallback |
+| `tests/test_orchestrator_integration.py` | 25 integration tests |
