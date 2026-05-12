@@ -39,13 +39,26 @@ All core capabilities are implemented, tested, and functional:
    - `group_parallel_steps()`: Groups steps by parallelization potential
    - `analyze_step_dependencies()`: Maps dependencies between steps
    - Sequential-only types: SYNTHESIS, ANALYSIS, EMAIL, VALIDATION, COLLECTION, SUMMARY
+5. **Enhanced Prompts**: Complete rewrite of all agent prompts
+   - Supervisor: Better role definition and workflow description
+   - Planner: Explicit valid tool names list, strict JSON output
+   - Dispatcher: Clear tool mapping and execution rules
+   - Collector: Better aggregation and deduplication
+   - Analyzer: Structured JSON output with sentiment analysis
+   - Synthesizer: Professional report template with references
+6. **LLM Health Manager**: New health monitoring system
+   - `LLMHealthManager` class in `app/services/llm/health.py`
+   - Async provider health checks with latency measurement
+   - Automatic fallback to healthy providers (Z.ai → Ollama → OpenRouter)
+   - Provider status tracking (healthy/degraded/unhealthy)
+   - Integration in OrchestratorNodes for pre-execution checks
 
 ### Known Issues
-- LLM network errors with Z.ai provider (glm-4.5-flash) - recommend using OpenRouter or Ollama for production
+- LLM network errors with Z.ai provider (glm-4.5-flash) - system auto-fallbacks to Ollama
 
 ### Recommendations
-- Add health checks for LLM provider connectivity
 - Consider adding more retry policies for tool failures
+- Add more valid tool names to prompts as more tools are registered
 
 ## What's New (2026-05-12)
 
