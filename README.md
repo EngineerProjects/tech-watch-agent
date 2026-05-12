@@ -21,13 +21,7 @@ All core capabilities are implemented, tested, and functional:
 - ✅ Dual-mode: autonomous (scheduled) + interactive (on-demand with approval)
 - ✅ **145 unit tests passing**
 
-## Audit Results (2026-05-12)
-
-### Bugs Fixed
-1. **Import error** (`app/prompts/newsletter` → `app/agents/newsletter/prompts`): Module structure refactored to move prompts under agents
-2. **Orchestrator factory bug**: `create_orchestrator_agent()` had invalid `checkpointer` parameter removed
-
-### New Features (2026-05-12)
+### New Features
 1. **Email as Tool**: `EmailTool` and `EmailPreviewTool` registered in tool registry
    - `email` tool: Send emails via Gmail API with HTML/text rendering
    - `email_preview` tool: Preview email content without sending
@@ -79,54 +73,6 @@ All core capabilities are implemented, tested, and functional:
 | `/sessions/{id}/checkpoint/latest` | GET | Get latest checkpoint for resume |
 | `/sessions/{id}/resume` | POST | Resume interrupted session |
 | `/sessions/interruptible` | GET | List resumable sessions |
-
-### Known Issues
-- LLM network errors with Z.ai provider (glm-4.5-flash) - system auto-fallbacks to Ollama
-
-### Recommendations
-- Consider adding more retry policies for tool failures
-- Add more valid tool names to prompts as more tools are registered
-
-## What's New (2026-05-12)
-
-All core capabilities are implemented, tested, and functional:
-- ✅ Orchestrator agent (V2) with plan-based parallel research pipeline
-- ✅ Deep Research agent with supervisor-researcher pattern + PDF extraction
-- ✅ Newsletter agent (V2) with quality-based routing, source citations
-- ✅ Multi-provider LLM support (OpenRouter, Ollama, Z.ai, OpenAI)
-- ✅ 10+ monitoring tools (GitHub, Reddit, ArXiv, RSS, YouTube, Research Papers, Web Search)
-- ✅ PDF Downloader tool for academic papers (ArXiv, direct PDFs)
-- ✅ Tool plugin system with registry (fully tested)
-- ✅ Vector store with pgvector for semantic similarity + hybrid search
-- ✅ Email delivery via Gmail with source citations
-- ✅ REST API with 25+ endpoints
-- ✅ V1 (legacy newsletter) and V2 (orchestrator) execution modes
-- ✅ Dual-mode: autonomous (scheduled) + interactive (on-demand with approval)
-- ✅ **127 unit tests passing**
-
-## What's New (2026-05-12)
-
-### Memory Architecture
-- **Article persistence**: Articles fetched during research are automatically stored in DB via `ArticleService.save_articles()` — deduplicated by title+URL
-- **Report storage**: Final reports are persisted to `ResearchSession` table after synthesis
-- **Hybrid vector search**: `VectorStore.search()` now supports keyword filtering + configurable time windows (30 days default)
-- **Three memory tiers**: Short-term (LangGraph state), Medium-term (ResearchSession), Long-term (Vector Store)
-
-### Newsletter as Sub-Agent
-- Orchestrator can now call `NewsletterAgent` as a `NEWSLETTER` step type
-- Passes orchestrator's collected research results to NewsletterAgent (no re-fetch)
-- Newsletter uses async nodes with `async_generate_completion()` throughout
-
-### Deep Research PDF Integration
-- New `PDFDownloaderTool` + `ArXivPDFTool` for downloading and parsing PDFs
-- Downloads PDFs from ArXiv/OpenAlex/any URL, extracts text via PyMuPDF, auto-cleans temp files
-- DeepResearch now downloads and extracts full PDF content for academic papers
-- Section extraction (abstract, intro, methods, results, conclusion) for structured reading
-
-### Source Citations
-- Newsletter editor prompt requires inline citations `[1]`, `[2]` etc. for facts/data/research
-- References section appended to every newsletter
-- Sources passed to Editor node as formatted reference list
 
 ## Architecture
 
@@ -423,5 +369,3 @@ class MyAgent(BaseAgent):
 - **Docker** - Containerization
 
 ## License
-
-MIT License - See LICENSE file for details

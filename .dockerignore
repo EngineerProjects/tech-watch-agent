@@ -1,10 +1,56 @@
-.git
-.pytest_cache
-__pycache__
-*.pyc
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+
+# Docker
+docker/
+
+# Logs
+logs/
+*.log
+
+# Credentials (mount at runtime)
 .env
-sources
-logs
-tests
-docs
-scripts
+credentials.json
+token.json
+
+# Local development
+.env.local
+.env.*.local
+
+# Misc
+.DS_Store
+*.bak

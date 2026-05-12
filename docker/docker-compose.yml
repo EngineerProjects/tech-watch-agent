@@ -1,7 +1,7 @@
 services:
   # PostgreSQL database with pgvector extension
   postgres:
-    image: pgvector/pgvector:pg16  # Official image with pgvector
+    image: pgvector/pgvector:pg16
     container_name: tech-watch-postgres
     environment:
       POSTGRES_USER: postgres
@@ -12,11 +12,12 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     restart: unless-stopped
 
   # Redis for caching and task queue
@@ -29,19 +30,22 @@ services:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     restart: unless-stopped
 
   # FastAPI application server
-  tech-watch-api:
+  api:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        - PYTHON_VERSION=3.11
+    image: tech-watch-agent:latest
     container_name: tech-watch-api
     env_file:
-      - path: ../.env
+      - path: .env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
@@ -53,9 +57,9 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ../logs:/app/logs
-      - ../credentials.json:/app/credentials.json:ro
-      - ../token.json:/app/token.json
+      - logs_data:/app/logs
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json
     ports:
       - "8000:8000"
     healthcheck:
@@ -72,15 +76,18 @@ services:
         python -m app.main --mode api
       "
     restart: unless-stopped
+    networks:
+      - tech-watch-network
 
   # One-time newsletter generation
-  tech-watch-once:
+  once:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    image: tech-watch-agent:latest
     container_name: tech-watch-once
     env_file:
-      - path: ../.env
+      - path: .env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
@@ -88,24 +95,28 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ../logs:/app/logs
-      - ../credentials.json:/app/credentials.json:ro
-      - ../token.json:/app/token.json
+      - logs_data:/app/logs
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json
     command: >
       sh -c "
         alembic upgrade head &&
-        python -m app.main --mode once
+        python -m app.main --mode once --no-email
       "
-    profiles: ["manual"]
+    profiles:
+      - manual
+    networks:
+      - tech-watch-network
 
-  # Scheduled newsletter generation (runs on schedule)
-  tech-watch-scheduler:
+  # Scheduled newsletter generation
+  scheduler:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    image: tech-watch-agent:latest
     container_name: tech-watch-scheduler
     env_file:
-      - path: ../.env
+      - path: .env
         required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
@@ -113,17 +124,25 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ../logs:/app/logs
-      - ../credentials.json:/app/credentials.json:ro
-      - ../token.json:/app/token.json
+      - logs_data:/app/logs
+      - ./credentials.json:/app/credentials.json:ro
+      - ./token.json:/app/token.json
     command: >
       sh -c "
         alembic upgrade head &&
         python -m app.main --mode schedule
       "
-    profiles: ["scheduler"]
+    profiles:
+      - scheduler
     restart: unless-stopped
+    networks:
+      - tech-watch-network
 
 volumes:
   postgres_data:
   redis_data:
+  logs_data:
+
+networks:
+  tech-watch-network:
+    driver: bridge
