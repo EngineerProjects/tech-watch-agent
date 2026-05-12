@@ -14,12 +14,21 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project metadata and package sources required for installation
-COPY pyproject.toml README.md ./
-COPY app ./app
+# Copy only dependency metadata first so code changes do not invalidate
+# the third-party dependency layer.
+COPY pyproject.toml ./
 
-# Install dependencies
-RUN pip install --no-cache-dir --prefix=/install .
+RUN python - <<'PY' > /tmp/requirements.txt
+from pathlib import Path
+import tomllib
+
+data = tomllib.loads(Path("pyproject.toml").read_text())
+for dependency in data["project"]["dependencies"]:
+    print(dependency)
+PY
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --prefix=/install -r /tmp/requirements.txt
 
 # Stage 2: Runtime
 FROM python:${PYTHON_VERSION}-slim AS runtime
