@@ -4,7 +4,7 @@ import asyncio
 
 from app.agents.newsletter.state import NewsletterState
 from app.core.logging import get_logger
-from app.prompts.newsletter import (
+from app.agents.newsletter.prompts import (
     ANALYSIS_SYSTEM_PROMPT,
     ANALYSIS_USER_PROMPT,
     EDITOR_SYSTEM_PROMPT,

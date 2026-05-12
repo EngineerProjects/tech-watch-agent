@@ -236,7 +236,6 @@ class OrchestratorAgent(BaseAgent):
 def create_orchestrator_agent(
     config: Optional[OrchestratorConfig] = None,
     settings: Optional[Settings] = None,
-    checkpointer=None,
 ) -> OrchestratorAgent:
     """Factory function to create an orchestrator agent."""
-    return OrchestratorAgent(config=config, settings=settings, checkpointer=checkpointer)
+    return OrchestratorAgent(config=config, settings=settings)
