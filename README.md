@@ -19,6 +19,38 @@ All core capabilities are implemented, tested, and functional:
 - ✅ REST API with 25+ endpoints
 - ✅ V1 (legacy newsletter) and V2 (orchestrator) execution modes
 - ✅ Dual-mode: autonomous (scheduled) + interactive (on-demand with approval)
+- ✅ **145 unit tests passing**
+
+## Audit Results (2026-05-12)
+
+### Bugs Fixed
+1. **Import error** (`app/prompts/newsletter` → `app/agents/newsletter/prompts`): Module structure refactored to move prompts under agents
+2. **Orchestrator factory bug**: `create_orchestrator_agent()` had invalid `checkpointer` parameter removed
+
+### Known Issues
+- LLM network errors with Z.ai provider (glm-4.5-flash) - recommend using OpenRouter or Ollama for production
+- Planner JSON parsing fallback to default plan when LLM returns non-JSON response
+
+### Recommendations
+- Add type hints validation in planner node
+- Consider adding retry logic for LLM calls
+- Add health checks for LLM provider connectivity
+
+## What's New (2026-05-12)
+
+All core capabilities are implemented, tested, and functional:
+- ✅ Orchestrator agent (V2) with plan-based parallel research pipeline
+- ✅ Deep Research agent with supervisor-researcher pattern + PDF extraction
+- ✅ Newsletter agent (V2) with quality-based routing, source citations
+- ✅ Multi-provider LLM support (OpenRouter, Ollama, Z.ai, OpenAI)
+- ✅ 10+ monitoring tools (GitHub, Reddit, ArXiv, RSS, YouTube, Research Papers, Web Search)
+- ✅ PDF Downloader tool for academic papers (ArXiv, direct PDFs)
+- ✅ Tool plugin system with registry (fully tested)
+- ✅ Vector store with pgvector for semantic similarity + hybrid search
+- ✅ Email delivery via Gmail with source citations
+- ✅ REST API with 25+ endpoints
+- ✅ V1 (legacy newsletter) and V2 (orchestrator) execution modes
+- ✅ Dual-mode: autonomous (scheduled) + interactive (on-demand with approval)
 - ✅ **127 unit tests passing**
 
 ## What's New (2026-05-12)
