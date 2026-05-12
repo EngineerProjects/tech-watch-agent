@@ -47,6 +47,7 @@ from app.agents.orchestrator.prompts import (
     EMAILER_USER,
 )
 from app.services.llm import ChatCompletionClient
+from app.services.llm.health import LLMHealthManager, get_health_manager
 from app.tools.registry import get_global_registry
 from app.core.logging import get_logger
 
@@ -204,6 +205,12 @@ class OrchestratorNodes:
     Each node is a callable that takes state and returns updated state.
     The nodes implement the supervisor pattern: a central coordinator
     that dispatches work to specialists and synthesizes results.
+
+    Features:
+    - Retry policies with exponential backoff for parallel execution
+    - Fallback chain (try multiple tools if one fails)
+    - Error aggregation with detailed logging
+    - LLM health monitoring with auto-fallback
     """
 
     def __init__(
@@ -211,16 +218,44 @@ class OrchestratorNodes:
         llm_client: Optional[ChatCompletionClient] = None,
         max_articles: int = 5,
         min_sources: int = 2,
+        health_manager: Optional[LLMHealthManager] = None,
     ) -> None:
         self._llm_client = llm_client
         self._max_articles = max_articles
         self._min_sources = min_sources
         self._registry = get_global_registry()
         self._deep_research_agent = None
+        self._health_manager = health_manager or get_health_manager()
 
     def _client(self) -> ChatCompletionClient:
         if self._llm_client is None:
             self._llm_client = ChatCompletionClient()
+        return self._llm_client
+
+    async def _ensure_healthy_llm(self) -> str:
+        """Ensure LLM provider is healthy, switching if necessary.
+        
+        Returns:
+            Name of the active (healthy) provider
+        """
+        try:
+            from app.config.settings import get_settings
+            settings = get_settings()
+            
+            api_keys = {
+                "zai": settings.zai_api_key or "",
+                "openrouter": settings.llm_api_key or "",
+            }
+            
+            active_provider = await self._health_manager.ensure_healthy_provider(api_keys)
+            
+            if active_provider != self._health_manager.active_provider:
+                logger.info("Switched LLM provider to: %s", active_provider)
+            
+            return active_provider
+        except Exception as exc:
+            logger.warning("Health check failed: %s. Using default provider.", exc)
+            return self._health_manager.active_provider
         return self._llm_client
 
     def _get_deep_research_agent(self):
@@ -271,6 +306,7 @@ class OrchestratorNodes:
         - Each step must have required fields (step_id, name, step_type)
         - Retries up to max_plan_retries times before using fallback
         - Cannot exit without a complete plan
+        - Includes LLM health check before execution
         """
         task = state.get("task", "")
         topics = state.get("metadata", {}).get("topics", task)
@@ -278,7 +314,15 @@ class OrchestratorNodes:
         max_plan_retries = state.get("max_plan_retries", 3)
         plan_attempts = state.get("plan_attempts", 0)
 
+        # Ensure LLM is healthy before planning
+        active_provider = await self._ensure_healthy_llm()
+        logger.info("Using LLM provider for planning: %s", active_provider)
+
         client = self._client()
+        
+        # Get date for prompt
+        current_date = datetime.now().strftime("%Y-%m-%d")
+        
         prompt = PLANNER_USER.format(
             task=task,
             topics=", ".join(topics) if isinstance(topics, list) else topics,
@@ -625,7 +669,7 @@ Rules:
             return await self._execute_with_retry(step, idx, tool_name, params, state)
 
         try:
-            tasks = [run_step(plan[i], i) for i in pending_indices]
+            tasks = [run_step(plan[i], i) for i in pending_parallel]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             research_results = state.get("research_results", [])
@@ -860,7 +904,7 @@ Rules:
             else:
                 return {
                     "success": False,
-                    "error": result.error or "Newsletter agent failed",
+                    "error": (result.errors[0] if result.errors else "Newsletter agent failed"),
                 }
 
         except Exception as exc:
