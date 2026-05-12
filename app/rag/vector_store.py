@@ -6,10 +6,11 @@ It uses pgvector extension for PostgreSQL to store and search embeddings,
 enabling similarity-based retrieval of articles and content.
 
 Key features:
-- Embedding generation using configurable LLM provider
+- Real embedding generation via EmbeddingService (OpenAI, Z.ai, Ollama)
 - Semantic similarity search
 - Article deduplication based on content similarity
 - Hybrid search (vector + keyword)
+- Caching for performance
 
 Note: Requires pgvector extension to be installed on PostgreSQL:
     CREATE EXTENSION IF NOT EXISTS vector;
@@ -30,7 +31,6 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-# Default embedding dimension (OpenAI text-embedding-3-small)
 DEFAULT_EMBEDDING_DIM = 1536
 
 
@@ -43,23 +43,19 @@ class EmbeddingConfig:
         dimension: Embedding vector dimension
         batch_size: Number of texts to embed in a single batch
         normalize: Whether to normalize embedding vectors
+        provider: Embedding provider (openai, zai, ollama)
     """
 
     model: str = "text-embedding-3-small"
     dimension: int = DEFAULT_EMBEDDING_DIM
     batch_size: int = 100
     normalize: bool = True
+    provider: str = "openai"
 
 
 @dataclass
 class SearchResult:
-    """Result from a vector similarity search.
-
-    Attributes:
-        id: Unique identifier of the matched item
-        score: Similarity score (0.0 to 1.0)
-        metadata: Additional metadata about the item
-    """
+    """Result from a vector similarity search."""
 
     id: str
     score: float
@@ -95,34 +91,26 @@ class VectorStore:
         self.session = session
         self.config = config or EmbeddingConfig()
         self.settings = settings or get_settings()
-        self._embedding_client: Optional[Any] = None
+        self._embedding_service: Optional[Any] = None
+        self._embedding_cache: dict[str, list[float]] = {}
+        self._cache_size = 1000
 
-    async def _get_embedding_client(self) -> Any:
-        """Get or create the embedding client.
-
-        Returns:
-            Client capable of generating embeddings
-        """
-        if self._embedding_client is None:
-            # Lazy initialization - use httpx for simple embedding
-            # In production, use a proper embedding service
-            self._embedding_client = await self._create_embedding_client()
-        return self._embedding_client
-
-    async def _create_embedding_client(self) -> Any:
-        """Create the embedding client.
+    async def _get_embedding_service(self) -> Any:
+        """Get or create the embedding service.
 
         Returns:
-            Configured embedding client
+            EmbeddingService for generating embeddings
         """
-        # Simple implementation using the LLM client
-        # In production, use OpenAI or other embedding API
-        from app.services.llm import ChatCompletionClient
-
-        return ChatCompletionClient(settings=self.settings)
+        if self._embedding_service is None:
+            from app.services.embedding.service import create_embedding_service
+            self._embedding_service = create_embedding_service(
+                provider=self.config.provider,
+                model=self.config.model,
+            )
+        return self._embedding_service
 
     async def generate_embedding(self, text: str) -> list[float]:
-        """Generate an embedding for the given text.
+        """Generate an embedding for the given text using real embedding service.
 
         Args:
             text: The text to embed
@@ -130,45 +118,49 @@ class VectorStore:
         Returns:
             List of floats representing the embedding vector
         """
-        client = await self._get_embedding_client()
+        if not text:
+            return [0.0] * self.config.dimension
 
-        # Use the LLM service to generate embeddings
-        # Note: This is a simplified implementation
-        # In production, use a dedicated embedding API
+        cache_key = self._embedding_cache_key(text)
+        if cache_key in self._embedding_cache:
+            return self._embedding_cache[cache_key]
+
         try:
-            # For now, generate a simple hash-based pseudo-embedding
-            # This should be replaced with actual embedding generation
-            import hashlib
-            import struct
+            service = await self._get_embedding_service()
+            result = await service.embed(text[:8000])
 
-            # Create a deterministic pseudo-embedding for testing
-            hash_bytes = hashlib.sha256(text.encode()).digest()
-            # Convert to floats in range [-1, 1]
-            values = []
-            for i in range(0, min(len(hash_bytes), self.config.dimension), 8):
-                val = struct.unpack('d', hash_bytes[i:i+8])[0]
-                # Normalize to [-1, 1]
-                normalized = (val % 2) - 1
-                values.append(normalized)
+            embedding = result.embedding
 
-            # Pad or truncate to exact dimension
-            while len(values) < self.config.dimension:
-                values.append(0.0)
-            embedding = values[:self.config.dimension]
+            if len(embedding) != self.config.dimension:
+                if len(embedding) < self.config.dimension:
+                    embedding = embedding + [0.0] * (self.config.dimension - len(embedding))
+                else:
+                    embedding = embedding[:self.config.dimension]
 
-            # Normalize if configured
             if self.config.normalize:
                 import math
                 norm = math.sqrt(sum(x * x for x in embedding))
                 if norm > 0:
                     embedding = [x / norm for x in embedding]
 
+            self._add_to_cache(cache_key, embedding)
             return embedding
 
         except Exception as exc:
             logger.error("Failed to generate embedding: %s", exc)
-            # Return zero vector on error
             return [0.0] * self.config.dimension
+
+    def _embedding_cache_key(self, text: str) -> str:
+        """Generate cache key for embedding."""
+        import hashlib
+        return hashlib.sha256(text.encode()).hexdigest()[:64]
+
+    def _add_to_cache(self, key: str, embedding: list[float]) -> None:
+        """Add embedding to cache with LRU eviction."""
+        if len(self._embedding_cache) >= self._cache_size:
+            oldest = next(iter(self._embedding_cache))
+            del self._embedding_cache[oldest]
+        self._embedding_cache[key] = embedding
 
     async def upsert(
         self,

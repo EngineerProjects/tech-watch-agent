@@ -207,7 +207,12 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    async def execute(self, input_data: Any) -> AgentResult:
+    async def execute(
+        self,
+        input_data: Any,
+        session_id: Optional[str] = None,
+        memory_context: Optional[dict[str, Any]] = None,
+    ) -> AgentResult:
         """Execute the agent with the given input.
 
         This is the main entry point for agent execution. Subclasses
@@ -215,6 +220,8 @@ class BaseAgent(ABC):
 
         Args:
             input_data: The input data for the agent (type depends on agent)
+            session_id: Optional session ID for memory context
+            memory_context: Optional pre-loaded memory context for RAG
 
         Returns:
             AgentResult with the execution outcome
@@ -315,6 +322,57 @@ class BaseAgent(ABC):
             "current_session_id": str(self._current_session_id) if self._current_session_id else None,
             "config": self.config.to_dict(),
         }
+
+    async def load_memory_context(
+        self,
+        session_id: str,
+        query: Optional[str] = None,
+        max_results: int = 5,
+    ) -> dict[str, Any]:
+        """Load relevant context from memory for this session.
+
+        Args:
+            session_id: Session ID to load context for
+            query: Optional query for semantic search
+            max_results: Maximum number of results to return
+
+        Returns:
+            Dictionary with memory context
+        """
+        context = {
+            "session_id": session_id,
+            "recent_articles": [],
+            "relevant_findings": [],
+            "topics": [],
+        }
+
+        try:
+            from app.tools.memory.search_memory import SearchMemoryTool, GetRecentContextTool
+
+            if session_id:
+                recent_tool = GetRecentContextTool()
+                recent_result = await recent_tool.execute({
+                    "session_id": session_id,
+                    "limit": max_results,
+                })
+
+                if recent_result.get("success"):
+                    context.update(recent_result.get("data", {}))
+
+            if query:
+                search_tool = SearchMemoryTool()
+                search_result = await search_tool.execute({
+                    "query": query,
+                    "top_k": max_results,
+                })
+
+                if search_result.get("success"):
+                    context["relevant_findings"] = search_result.get("data", {}).get("results", [])
+
+        except Exception as exc:
+            logger.warning("Failed to load memory context: %s", exc)
+
+        return context
 
     def validate_input(self, input_data: Any) -> bool:
         """Validate input data before execution.

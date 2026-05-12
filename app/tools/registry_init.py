@@ -105,7 +105,32 @@ def initialize_tools() -> None:
         logger.info("Registered YouTube tool")
     except ImportError as e:
         logger.warning(f"Could not import YouTubeTool: {e}")
-    
+
+    # Memory/RAG Tools
+    try:
+        from app.tools.memory.search_memory import SearchMemoryTool
+        register_tool(SearchMemoryTool())
+        tools_registered += 1
+        logger.info("Registered SearchMemory tool")
+    except ImportError as e:
+        logger.warning(f"Could not import SearchMemoryTool: {e}")
+
+    try:
+        from app.tools.memory.search_memory import GetRecentContextTool
+        register_tool(GetRecentContextTool())
+        tools_registered += 1
+        logger.info("Registered GetRecentContext tool")
+    except ImportError as e:
+        logger.warning(f"Could not import GetRecentContextTool: {e}")
+
+    try:
+        from app.tools.memory.search_memory import StoreResearchContextTool
+        register_tool(StoreResearchContextTool())
+        tools_registered += 1
+        logger.info("Registered StoreResearchContext tool")
+    except ImportError as e:
+        logger.warning(f"Could not import StoreResearchContextTool: {e}")
+
     logger.info(f"Tool initialization complete: {tools_registered} tools registered")
 
 

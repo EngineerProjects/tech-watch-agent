@@ -91,13 +91,20 @@ class OrchestratorAgent(BaseAgent):
 
         logger.info("Orchestrator agent setup complete")
 
-    async def execute(self, input_data: Any) -> AgentResult:
+    async def execute(
+        self,
+        input_data: Any,
+        session_id: Optional[str] = None,
+        memory_context: Optional[dict[str, Any]] = None,
+    ) -> AgentResult:
         """Execute the orchestrator pipeline.
 
         Args:
             input_data: Can be:
                 - str: The research task
                 - dict: {"task": str, "topics": list[str], "send_email": bool}
+            session_id: Optional session ID for memory tracking
+            memory_context: Optional pre-loaded memory context for RAG
 
         Returns:
             AgentResult with final_report, email_sent status, and metadata
@@ -112,12 +119,29 @@ class OrchestratorAgent(BaseAgent):
             task = input_data.get("task", str(input_data))
             topics = input_data.get("topics")
             send_email = input_data.get("send_email", True)
+            if session_id is None:
+                session_id = input_data.get("session_id")
+            if memory_context is None:
+                memory_context = input_data.get("memory_context")
         else:
             task = str(input_data)
             topics = None
             send_email = True
 
         logger.info("Orchestrator starting task: %s", task[:100])
+
+        memory_info = ""
+        if memory_context:
+            recent = memory_context.get("recent_articles", [])
+            if recent:
+                memory_info = f"\n\nContext from memory ({len(recent)} recent articles):\n"
+                memory_info += "\n".join([
+                    f"- {a.get('title', 'Unknown')}: {a.get('summary', '')[:100]}..."
+                    for a in recent[:3]
+                ])
+
+        if memory_info and topics:
+            task = task + memory_info
 
         try:
             await self.setup()
