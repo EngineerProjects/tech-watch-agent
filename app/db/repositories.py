@@ -21,7 +21,9 @@ from app.db.models import (
     Article,
     NewsletterRun,
     NewsletterRunArticle,
+    PlanVersion,
     ResearchSession,
+    SessionCheckpoint,
     ToolExecution,
     User,
     UserTopic,
@@ -373,6 +375,68 @@ class ResearchSessionRepository:
         query = query.limit(limit)
         result = await self.session.execute(query)
         return result.scalars().all()
+
+    async def get_by_status(self, status: str, limit: int = 10) -> Sequence[ResearchSession]:
+        """Get sessions by status (e.g., 'research', 'failed', 'completed')."""
+        query = (
+            select(ResearchSession)
+            .where(ResearchSession.status == status)
+            .order_by(ResearchSession.updated_at.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def get_interruptible_sessions(self) -> Sequence[ResearchSession]:
+        """Get sessions that can be resumed (not completed or failed)."""
+        query = (
+            select(ResearchSession)
+            .where(
+                and_(
+                    ResearchSession.status.in_(["created", "running", "research"]),
+                    ResearchSession.phase.in_(["plan", "research", "collection", "analysis"]),
+                )
+            )
+            .order_by(ResearchSession.updated_at.desc())
+        )
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def get_plan_versions(self, session_id: uuid.UUID) -> Sequence[PlanVersion]:
+        """Get all plan versions for a session."""
+        query = (
+            select(PlanVersion)
+            .where(PlanVersion.session_id == session_id)
+            .order_by(PlanVersion.version.asc())
+        )
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def get_checkpoints(self, session_id: uuid.UUID) -> Sequence[SessionCheckpoint]:
+        """Get all checkpoints for a session."""
+        query = (
+            select(SessionCheckpoint)
+            .where(SessionCheckpoint.session_id == session_id)
+            .order_by(SessionCheckpoint.created_at.desc())
+        )
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def get_latest_checkpoint(self, session_id: uuid.UUID) -> Optional[SessionCheckpoint]:
+        """Get the latest checkpoint for a session."""
+        query = (
+            select(SessionCheckpoint)
+            .where(
+                and_(
+                    SessionCheckpoint.session_id == session_id,
+                    SessionCheckpoint.is_latest == True,
+                )
+            )
+            .order_by(SessionCheckpoint.created_at.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
 
 
 class ToolExecutionRepository:

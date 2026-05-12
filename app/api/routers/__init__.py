@@ -8,6 +8,7 @@ from app.api.routers.articles import router as articles_router
 from app.api.routers.newsletter import router as newsletter_router
 from app.api.routers.orchestrator import router as orchestrator_router
 from app.api.routers.research import router as research_router
+from app.api.routers.sessions import router as sessions_router
 from app.api.routers.tools import router as tools_router
 from app.api.routers.llm import router as llm_router
 
@@ -18,6 +19,7 @@ __all__ = [
     "newsletter_router",
     "orchestrator_router",
     "research_router",
+    "sessions_router",
     "tools_router",
     "llm_router",
 ]

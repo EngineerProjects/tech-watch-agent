@@ -26,6 +26,7 @@ from app.api.routers import (
     newsletter_router,
     orchestrator_router,
     research_router,
+    sessions_router,
     tools_router,
     llm_router,
 )
@@ -188,6 +189,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(newsletter_router)
     app.include_router(orchestrator_router)
     app.include_router(research_router)
+    app.include_router(sessions_router)
     app.include_router(tools_router)
     app.include_router(llm_router)
 

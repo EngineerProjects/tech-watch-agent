@@ -57,11 +57,28 @@ All core capabilities are implemented, tested, and functional:
    - `PlanVersion` model tracks all plan revisions with audit trail
    - `SessionCheckpoint` for resumable interrupted sessions
    - `app/services/session_manager.py` provides unified session management
-8. **Memory Compaction** (NEW)
+ 8. **Memory Compaction** (NEW)
    - Automatic compaction to avoid LLM context limits
    - Compacts working memory, NOT articles (kept full for RAG)
    - Summarizes research results while preserving raw data
    - Triggers at configurable thresholds (50K chars default)
+ 9. **Session Resume API** (NEW)
+   - REST endpoints for session management and resume
+   - List sessions by status, user, or interruptible state
+   - Get session details with plan versions and checkpoints
+   - Resume interrupted sessions from latest checkpoint
+
+### Session API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/sessions` | GET | List all sessions with filters |
+| `/sessions/{id}` | GET | Get session details |
+| `/sessions/{id}/plan` | GET | Get plan version history |
+| `/sessions/{id}/checkpoints` | GET | Get checkpoint history |
+| `/sessions/{id}/checkpoint/latest` | GET | Get latest checkpoint for resume |
+| `/sessions/{id}/resume` | POST | Resume interrupted session |
+| `/sessions/interruptible` | GET | List resumable sessions |
 
 ### Known Issues
 - LLM network errors with Z.ai provider (glm-4.5-flash) - system auto-fallbacks to Ollama
@@ -262,6 +279,15 @@ RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 ### Deep Research
 - `POST /research` - Start deep research session
 - `GET /research/history` - Get research history
+
+### Sessions (Resume & Versioning)
+- `GET /sessions` - List all sessions (filter by status, user, interruptible)
+- `GET /sessions/{id}` - Get session details (plan, checkpoints, results)
+- `GET /sessions/{id}/plan` - Get plan version history
+- `GET /sessions/{id}/checkpoints` - Get checkpoint history
+- `GET /sessions/{id}/checkpoint/latest` - Get latest checkpoint for resume
+- `POST /sessions/{id}/resume` - Resume interrupted session
+- `GET /sessions/interruptible` - List resumable sessions
 
 ### Articles
 - `GET /articles` - List articles with filters
