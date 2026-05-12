@@ -105,7 +105,6 @@ class NewsletterGraphBuilder:
         """
         workflow = StateGraph(NewsletterState)
 
-        # Add default nodes
         workflow.add_node("researcher", self.nodes.researcher)
         workflow.add_node("quality_check", self.nodes.quality_checker)
         workflow.add_node("analyst", self.nodes.analyst)
@@ -113,14 +112,11 @@ class NewsletterGraphBuilder:
         workflow.add_node("opinion_writer", self.nodes.opinion_writer)
         workflow.add_node("editor", self.nodes.editor)
 
-        # Add custom nodes
         for name, handler in self._custom_nodes.items():
             workflow.add_node(name, handler)
 
-        # Set entry point
         workflow.set_entry_point(self._entry_point)
 
-        # Add default edges with conditional routing
         workflow.add_edge("researcher", "quality_check")
 
         workflow.add_conditional_edges(
@@ -146,7 +142,6 @@ class NewsletterGraphBuilder:
         workflow.add_edge("opinion_writer", "editor")
         workflow.add_edge("editor", END)
 
-        # Add custom edges
         for from_node, to_node in self._edges:
             workflow.add_edge(from_node, to_node)
 
@@ -202,7 +197,6 @@ class NewsletterWorkflow:
         Returns:
             Compiled StateGraph
         """
-        # Use the builder for cleaner graph construction
         builder = NewsletterGraphBuilder(nodes=self.nodes)
         return builder.build()
 
@@ -218,7 +212,6 @@ class NewsletterWorkflow:
         Returns:
             NewsletterState with the generated newsletter and metadata
         """
-        # Initialize state from articles
         initial_state: NewsletterState = {
             "raw_articles": [article.to_dict() for article in articles],
             "research_summary": "",
@@ -235,7 +228,6 @@ class NewsletterWorkflow:
 
         except Exception as exc:
             logger.error("Newsletter workflow failed: %s", exc)
-            # Return initial state with error indication
             initial_state["error"] = str(exc)
             return initial_state
 
@@ -248,9 +240,24 @@ class NewsletterWorkflow:
         Returns:
             NewsletterState with the generated newsletter
         """
-        import asyncio
+        initial_state: NewsletterState = {
+            "raw_articles": [article.to_dict() for article in articles],
+            "research_summary": "",
+            "key_insights": "",
+            "opinion_analysis": "",
+            "final_newsletter": "",
+        }
 
-        return await asyncio.to_thread(self.run, articles)
+        try:
+            logger.info("Starting newsletter workflow async with %d articles", len(articles))
+            result = await self.graph.ainvoke(initial_state)
+            logger.info("Newsletter workflow completed successfully")
+            return result
+
+        except Exception as exc:
+            logger.error("Newsletter workflow async failed: %s", exc)
+            initial_state["error"] = str(exc)
+            return initial_state
 
     def get_graph_info(self) -> dict:
         """Get information about the compiled graph.

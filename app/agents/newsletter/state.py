@@ -12,3 +12,4 @@ class NewsletterState(TypedDict, total=False):
     quality_score: float
     quality_factors: list[str]
     quality_routing: str
+    error: str

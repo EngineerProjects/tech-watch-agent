@@ -49,7 +49,9 @@ Please include:
 
 EDITOR_SYSTEM_PROMPT = """You are the editor of a technology newsletter.
 Compile the provided material into a coherent, readable, professional newsletter
-formatted for email delivery."""
+formatted for email delivery. IMPORTANT: Always cite sources when referencing
+specific claims, data, or research findings. Format citations as inline references
+like [1] and list all sources at the end."""
 
 EDITOR_USER_PROMPT = """Compile this content into a final newsletter.
 
@@ -62,11 +64,17 @@ Key insights:
 Opinion and commentary:
 {opinion_analysis}
 
+Sources (cite each one when referencing specific facts, data, or research):
+{sources}
+
 Create:
 1. A suggested subject line
 2. A short introduction
-3. Clear sections
+3. Clear sections with inline source citations [1], [2], etc.
 4. Smooth transitions
 5. A concise conclusion
 6. A short call to action
-"""
+7. References section listing all sources with title and URL
+
+IMPORTANT: Reference each source when you mention specific facts, statistics,
+or research findings from it. Use [1], [2], etc. inline, then list sources."""

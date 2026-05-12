@@ -113,33 +113,43 @@ class NewsletterAgent(BaseAgent):
         """Execute the newsletter generation.
 
         This method orchestrates the full newsletter generation pipeline:
-        1. Fetch articles for configured topics
+        1. Fetch articles for configured topics (or use provided ones)
         2. Run the articles through the analysis workflow
         3. Return the generated newsletter
 
         Args:
-            input_data: Can be None or a dict with optional 'topics' key
+            input_data: Can be a dict with optional keys:
+                - 'topics': list of topics to cover
+                - 'articles': pre-fetched articles to use (bypasses fetching)
+                - 'send_email': whether to send email
 
         Returns:
             AgentResult containing the generated newsletter
         """
-        # Extract topics from input or use defaults
+        await self.setup()
+
         topics = None
+        articles_input = None
+        send_email = self.config.send_email
+
         if isinstance(input_data, dict):
             topics = input_data.get("topics")
-            send_email = input_data.get("send_email", self.config.send_email)
-        else:
-            send_email = self.config.send_email
+            articles_input = input_data.get("articles")
+            send_email = input_data.get("send_email", send_email)
+        elif isinstance(input_data, str):
+            topics = [input_data]
 
-        # Use configured topics if none provided
         if topics is None:
             topics = self.config.topics or self.settings.newsletter_topics
 
         logger.info("Generating newsletter for topics: %s", topics)
 
         try:
-            # Fetch articles for topics
-            articles = await self._article_service.fetch_articles_for_topics(topics)
+            if articles_input:
+                articles = articles_input
+                logger.info("Using %d pre-fetched articles", len(articles))
+            else:
+                articles = await self._article_service.fetch_articles_for_topics(topics)
 
             if not articles:
                 return AgentResult.create_error(
@@ -147,12 +157,13 @@ class NewsletterAgent(BaseAgent):
                     metadata={"topics": topics},
                 )
 
-            logger.info("Collected %d articles", len(articles))
+            logger.info("Processing %d articles", len(articles))
 
-            # Run the workflow
-            workflow_state = self._workflow.run(articles)
+            workflow_state = await self._workflow.run_async(articles)
 
-            # Extract the final newsletter
+            if workflow_state.get("error"):
+                logger.warning("Workflow returned error: %s", workflow_state["error"])
+
             final_newsletter = workflow_state.get("final_newsletter", "").strip()
 
             if not final_newsletter:
@@ -161,13 +172,16 @@ class NewsletterAgent(BaseAgent):
                     metadata={"article_count": len(articles)},
                 )
 
-            # Generate metadata
+            sources_text = self._format_sources_for_metadata(articles)
+
             metadata = {
                 "article_count": len(articles),
                 "topics": topics,
-                "topics_covered": list(set(a.topic for a in articles)),
-                "research_summary_length": len(workflow_state.get("research_summary", "")),
+                "topics_covered": list(set(a.topic for a in articles if hasattr(a, "topic"))),
+                "quality_score": workflow_state.get("quality_score", 0),
+                "workflow_error": workflow_state.get("error"),
                 "newsletter_length": len(final_newsletter),
+                "sources": sources_text,
             }
 
             return AgentResult.create_success(
@@ -175,6 +189,7 @@ class NewsletterAgent(BaseAgent):
                     "newsletter": final_newsletter,
                     "articles": [a.to_dict() for a in articles],
                     "workflow_state": workflow_state,
+                    "subject": self._extract_subject(final_newsletter),
                 },
                 metadata=metadata,
             )
@@ -185,6 +200,64 @@ class NewsletterAgent(BaseAgent):
                 errors=[str(exc)],
                 metadata={"topics": topics},
             )
+
+    def _extract_subject(self, newsletter: str) -> str:
+        lines = newsletter.strip().split("\n")
+        if lines:
+            first = lines[0].strip()
+            if first.startswith("#"):
+                return first.lstrip("#").strip()
+            return first
+        return self.config.newsletter_title
+
+    @staticmethod
+    def _format_sources_for_metadata(articles: list) -> str:
+        """Format sources as a numbered reference list for metadata.
+
+        Args:
+            articles: List of Article objects
+
+        Returns:
+            Formatted sources string
+        """
+        if not articles:
+            return "No sources."
+
+        lines = []
+        seen: set[str] = set()
+        for i, article in enumerate(articles, start=1):
+            if hasattr(article, "url"):
+                url = article.url
+            elif isinstance(article, dict):
+                url = article.get("url", "")
+            else:
+                continue
+
+            if not url or url in seen:
+                continue
+            seen.add(url)
+
+            if hasattr(article, "title"):
+                title = article.title
+                source = article.source
+            else:
+                title = article.get("title", "Unknown")
+                source = article.get("source", "")
+
+            lines.append(f"[{i}] {title} ({source or 'web'}) — {url}")
+
+        return "\n".join(lines) if lines else "No sources."
+
+    async def run(self, task: str, **kwargs) -> AgentResult:
+        """Alias for execute() matching BaseAgent interface.
+
+        Args:
+            task: The task/topic to generate newsletter for
+
+        Returns:
+            AgentResult containing the generated newsletter
+        """
+        return await self.execute(task)
 
     async def generate_with_delivery(
         self,

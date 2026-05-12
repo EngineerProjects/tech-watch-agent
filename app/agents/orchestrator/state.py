@@ -39,6 +39,7 @@ class StepType(str, Enum):
     PAPER = "paper"
     VIDEO = "video"
     NEWS = "news"
+    NEWSLETTER = "newsletter"
 
 
 def parse_step_type(value: str) -> StepType:

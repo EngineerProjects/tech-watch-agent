@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.agents.newsletter.state import NewsletterState
 from app.core.logging import get_logger
 from app.prompts.newsletter import (
@@ -23,19 +25,39 @@ class NewsletterNodes:
         self.llm_client = llm_client
 
     def _client(self) -> ChatCompletionClient:
-        # Lazy initialization keeps imports cheap for tests and API startup.
         if self.llm_client is None:
             self.llm_client = ChatCompletionClient()
         return self.llm_client
 
-    def researcher(self, state: NewsletterState) -> NewsletterState:
+    async def _async_generate(
+        self,
+        prompt: str,
+        system_message: str,
+        temperature: float = 0.4,
+        max_tokens: int = 0,
+        extra_headers: dict | None = None,
+    ) -> str:
+        """Generate completion using async LLM call."""
+        client = self._client()
+        kwargs: dict = {
+            "prompt": prompt,
+            "system_message": system_message,
+            "temperature": temperature,
+        }
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+        return await client.async_generate_completion(**kwargs)
+
+    async def researcher(self, state: NewsletterState) -> NewsletterState:
         articles = state.get("raw_articles", [])
         if not articles:
             logger.warning("Researcher received no articles")
             return state
 
         articles_text = self._format_articles(articles)
-        state["research_summary"] = self._client().generate_completion(
+        state["research_summary"] = await self._async_generate(
             prompt=RESEARCH_USER_PROMPT.format(articles_text=articles_text),
             system_message=RESEARCH_SYSTEM_PROMPT,
             temperature=0.3,
@@ -43,13 +65,13 @@ class NewsletterNodes:
         )
         return state
 
-    def analyst(self, state: NewsletterState) -> NewsletterState:
+    async def analyst(self, state: NewsletterState) -> NewsletterState:
         research_summary = state.get("research_summary", "")
         if not research_summary:
             logger.warning("Analyst received no research summary")
             return state
 
-        state["key_insights"] = self._client().generate_completion(
+        state["key_insights"] = await self._async_generate(
             prompt=ANALYSIS_USER_PROMPT.format(research_summary=research_summary),
             system_message=ANALYSIS_SYSTEM_PROMPT,
             temperature=0.4,
@@ -57,14 +79,14 @@ class NewsletterNodes:
         )
         return state
 
-    def opinion_writer(self, state: NewsletterState) -> NewsletterState:
+    async def opinion_writer(self, state: NewsletterState) -> NewsletterState:
         research_summary = state.get("research_summary", "")
         key_insights = state.get("key_insights", "")
         if not research_summary or not key_insights:
             logger.warning("Opinion writer received incomplete state")
             return state
 
-        state["opinion_analysis"] = self._client().generate_completion(
+        state["opinion_analysis"] = await self._async_generate(
             prompt=OPINION_USER_PROMPT.format(
                 research_summary=research_summary,
                 key_insights=key_insights,
@@ -75,12 +97,16 @@ class NewsletterNodes:
         )
         return state
 
-    def editor(self, state: NewsletterState) -> NewsletterState:
-        state["final_newsletter"] = self._client().generate_completion(
+    async def editor(self, state: NewsletterState) -> NewsletterState:
+        articles = state.get("raw_articles", [])
+        sources_text = self._format_sources(articles)
+
+        state["final_newsletter"] = await self._async_generate(
             prompt=EDITOR_USER_PROMPT.format(
                 research_summary=state.get("research_summary", ""),
                 key_insights=state.get("key_insights", ""),
                 opinion_analysis=state.get("opinion_analysis", ""),
+                sources=sources_text,
             ),
             system_message=EDITOR_SYSTEM_PROMPT,
             temperature=0.4,
@@ -88,8 +114,32 @@ class NewsletterNodes:
         )
         return state
 
+    @staticmethod
+    def _format_sources(articles: list[dict[str, object]]) -> str:
+        """Format article list as a sources reference section.
+
+        Creates a numbered list of sources with title and URL for citation.
+        """
+        if not articles:
+            return "No sources available."
+
+        lines = []
+        seen_urls: set[str] = set()
+        for i, article in enumerate(articles, start=1):
+            url = article.get("url", "")
+            title = article.get("title", "Unknown source")
+            source = article.get("source", "")
+
+            if url and url in seen_urls:
+                continue
+            if url:
+                seen_urls.add(url)
+
+            lines.append(f"[{i}] {title} — {source or 'web'}\n    {url}")
+
+        return "\n".join(lines) if lines else "No sources available."
+
     def quality_checker(self, state: NewsletterState) -> NewsletterState:
-        """Evaluate the quality of gathered content and determine routing."""
         articles = state.get("raw_articles", [])
         research_summary = state.get("research_summary", "")
 
@@ -140,11 +190,10 @@ class NewsletterNodes:
 
         return state
 
-    def enhanced_analyst(self, state: NewsletterState) -> NewsletterState:
-        """Enhanced analyst for lower quality content - more thorough analysis."""
+    async def enhanced_analyst(self, state: NewsletterState) -> NewsletterState:
         research_summary = state.get("research_summary", "")
         if not research_summary:
-            return self.analyst(state)
+            return await self.analyst(state)
 
         prompt = f"""You are a thorough research analyst. Provide an in-depth analysis.
 
@@ -159,7 +208,7 @@ Provide:
 
 Be comprehensive and analytical."""
 
-        state["key_insights"] = self._client().generate_completion(
+        state["key_insights"] = await self._async_generate(
             prompt=prompt,
             system_message="You are an expert research analyst.",
             temperature=0.5,
@@ -169,8 +218,6 @@ Be comprehensive and analytical."""
 
     @staticmethod
     def _format_articles(articles: list[dict[str, object]]) -> str:
-        # We flatten article objects into a compact textual bundle because it is
-        # easier to keep prompts stable than passing provider-specific tool state.
         lines: list[str] = []
         for index, article in enumerate(articles, start=1):
             title = article.get("title", "No title")

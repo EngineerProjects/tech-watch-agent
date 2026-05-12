@@ -8,200 +8,97 @@ An open-source platform for automated technology monitoring and comprehensive re
 
 All core capabilities are implemented, tested, and functional:
 - ✅ Orchestrator agent (V2) with plan-based parallel research pipeline
-- ✅ Deep Research agent with supervisor-researcher pattern
-- ✅ Newsletter agent (V1) for automated content generation
+- ✅ Deep Research agent with supervisor-researcher pattern + PDF extraction
+- ✅ Newsletter agent (V2) with quality-based routing, source citations
 - ✅ Multi-provider LLM support (OpenRouter, Ollama, Z.ai, OpenAI)
 - ✅ 10+ monitoring tools (GitHub, Reddit, ArXiv, RSS, YouTube, Research Papers, Web Search)
+- ✅ PDF Downloader tool for academic papers (ArXiv, direct PDFs)
 - ✅ Tool plugin system with registry (fully tested)
-- ✅ Vector store with pgvector for semantic similarity
-- ✅ Email delivery via Gmail
+- ✅ Vector store with pgvector for semantic similarity + hybrid search
+- ✅ Email delivery via Gmail with source citations
 - ✅ REST API with 25+ endpoints
 - ✅ V1 (legacy newsletter) and V2 (orchestrator) execution modes
-- ✅ **94 unit tests passing** (100% of core functionality tested)
+- ✅ Dual-mode: autonomous (scheduled) + interactive (on-demand with approval)
+- ✅ **127 unit tests passing**
 
-## Recent Fixes (2026-05-11)
+## What's New (2026-05-12)
 
-The following issues were identified and fixed during the Phase 1 audit:
-- Fixed duplicate `AgentRegistry` class definitions (consolidated)
-- Fixed test imports referencing renamed `OrchestratorScheduler`
-- Fixed duplicate property assignment in `NewsletterAgent`
-- Fixed `CompositeTool` missing required abstract methods
-- Fixed async/await issues in tool tests
-- Fixed database model compatibility (PostgreSQL → SQLite for tests via dialect-aware types)
-- Fixed relationship configuration in `UserSession` model
-- Fixed nullable timestamps in models for SQLite compatibility
-- Fixed settings test isolation (cache clear + env var cleanup)
+### Memory Architecture
+- **Article persistence**: Articles fetched during research are automatically stored in DB via `ArticleService.save_articles()` — deduplicated by title+URL
+- **Report storage**: Final reports are persisted to `ResearchSession` table after synthesis
+- **Hybrid vector search**: `VectorStore.search()` now supports keyword filtering + configurable time windows (30 days default)
+- **Three memory tiers**: Short-term (LangGraph state), Medium-term (ResearchSession), Long-term (Vector Store)
 
-## Roadmap (Next Improvements)
+### Newsletter as Sub-Agent
+- Orchestrator can now call `NewsletterAgent` as a `NEWSLETTER` step type
+- Passes orchestrator's collected research results to NewsletterAgent (no re-fetch)
+- Newsletter uses async nodes with `async_generate_completion()` throughout
 
-### Phase 2: Enhanced Features
-- [ ] Scrapling integration for advanced web fetching
-- [ ] Adaptive element tracking for resilient content scraping
-- [ ] Multi-session spider support with proxy rotation
-- [ ] Cloudflare/anti-bot bypass for protected sites
+### Deep Research PDF Integration
+- New `PDFDownloaderTool` + `ArXivPDFTool` for downloading and parsing PDFs
+- Downloads PDFs from ArXiv/OpenAlex/any URL, extracts text via PyMuPDF, auto-cleans temp files
+- DeepResearch now downloads and extracts full PDF content for academic papers
+- Section extraction (abstract, intro, methods, results, conclusion) for structured reading
 
-### Phase 3: Production Hardening
-- [ ] LangGraph checkpointing for long-running sessions
-- [ ] LangSmith observability integration
-- [ ] Celery/Temporal for distributed task queues
-- [ ] Web dashboard for monitoring
-- [ ] Multi-tenant support
-- [ ] Advanced analytics
+### Source Citations
+- Newsletter editor prompt requires inline citations `[1]`, `[2]` etc. for facts/data/research
+- References section appended to every newsletter
+- Sources passed to Editor node as formatted reference list
+
+## Architecture
+
+### Agent Hierarchy
+
+```
+Orchestrator (V2)
+  ├── DeepResearch (sub-agent) — supervisor → parallel researchers
+  │     └── PDF Downloader (for ArXiv/OpenAlex papers)
+  └── Newsletter (sub-agent) — researcher → analyst → opinion_writer → editor
+        └── Source citation with [1], [2] references
+```
+
+### Dual-Mode Execution
+
+| Mode | Scheduler (cron) | API endpoint |
+|------|-----------------|--------------|
+| **Autonomous** | `autonomous=True` — fully automated, no approval | `--autonomous` flag |
+| **Interactive** | — | Human-in-the-loop approval before email |
+
+### Memory Flow
+
+```
+Research results → collector node → persist_articles() → DB (Article table)
+                          ↓
+              synthesizer node → persist_research_session() → DB (ResearchSession)
+                          ↓
+              VectorStore.upsert() with embedding → pgvector
+```
 
 ## Features
 
 ### Core Agents
 - **Orchestrator Agent** (V2): Central planner that decomposes tasks into execution plans, dispatches research in parallel across multiple tools, collects/validates results, analyzes, synthesizes reports, and delivers via email. Uses LangGraph StateGraph with supervisor pattern.
-- **Deep Research Agent**: Multi-agent supervisor-researcher pattern for in-depth investigations. Supports clarification loops, parallel research units, and citation tracking.
-- **Newsletter Agent** (V1): Automated newsletter generation from collected articles. Linear pipeline with quality-based routing.
-
-### Dual-Mode Architecture
-
-The orchestrator supports two execution modes:
-
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **Autonomous** | Fully automated, no human approval | Scheduled newsletters (e.g., 2x/week) |
-| **Interactive** | Human-in-the-loop for approval | On-demand research with review |
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    DUAL-MODE ARCHITECTURE                          │
-└─────────────────────────────────────────────────────────────────────┘
-
-   SCHEDULER (Cron-like)              API (On-demand)
-        │                                  │
-        ▼                                  ▼
-┌───────────────────┐            ┌───────────────────┐
-│ autonomous=True  │            │ autonomous=False  │
-│ • No approval    │            │ • Human approval   │
-│ • Auto email     │            │ • Review before   │
-│ • 2x/week config │            │   send            │
-└───────────────────┘            └───────────────────┘
-        │                                  │
-        └──────────────┬───────────────────┘
-                      ▼
-            ┌─────────────────────┐
-            │  OrchestratorAgent   │
-            │  + OrchestratorGraph │
-            └─────────────────────┘
-                      │
-                      ▼
-            ┌─────────────────────┐
-            │ Quality-based Flow   │
-            │ • Retry policies    │
-            │ • Fallback chains   │
-            │ • Checkpointing     │
-            └─────────────────────┘
-```
+- **Deep Research Agent**: Multi-agent supervisor-researcher pattern for in-depth investigations. Supports clarification loops, parallel research units, citation tracking. Downloads and extracts PDF content from ArXiv and OpenAlex.
+- **Newsletter Agent** (V2): Automated newsletter generation from collected articles. Quality-based routing (standard/enhanced/basic). Inline source citations with references section. Async nodes throughout.
 
 ### Monitoring Tools
 - **GitHub**: Repository search, trending repos, commit tracking, issues
 - **Reddit**: Subreddit monitoring, hot/new/top posts, search
-- **ArXiv**: Academic paper discovery, category browsing, author search
+- **ArXiv**: Academic paper discovery, category browsing, author search, **PDF download with full-text extraction**
+- **OpenAlex**: Free academic papers, citation data, **PDF content extraction**
 - **RSS/Atom**: Feed aggregation from multiple sources, auto-discovery
 - **Web Search**: News article collection via DuckDuckGo HTML
 - **YouTube**: Video transcript extraction, metadata, search
-- **Research Papers**: PDF download, PyMuPDF text extraction, Semantic Scholar search, arXiv metadata
+- **Research Papers**: Semantic Scholar search, PyMuPDF text extraction, arXiv metadata
+- **PDF Downloader**: Download PDFs from any URL, extract text, automatic cleanup
 
 ### Technical Features
 - **Multi-Provider LLM**: OpenRouter, Ollama, Z.ai, OpenAI with runtime switching and health checks
 - **Async-first**: Full async/await for concurrent operations
 - **Database**: PostgreSQL with SQLAlchemy async ORM + pgvector
 - **Tool Plugin System**: Extensible registry with category filtering
-- **Skills System**: Reusable skill modules attachable to agents
-- **Memory Layer**: Article store, vector store, session store
-- **Email Delivery**: Gmail OAuth with HTML/text rendering
-
-## Architecture
-
-```
-
-        ┌──────────────────────────────────────────────────────────────────────────────┐
-        │                               ENTRY POINTS                                   │
-        ├──────────────────────────────────────────────────────────────────────────────┤
-        │                                                                              │
-        │   ┌────────────┐   ┌────────────┐   ┌────────────┐   ┌──────────────────┐    │
-        │   │    CLI     │   │    API     │   │   Worker   │   │    Scheduler     │    │
-        │   │            │   │  FastAPI   │   │ Background │   │   APScheduler    │    │
-        │   └─────┬──────┘   └─────┬──────┘   └─────┬──────┘   └────────┬─────────┘    │
-        │         │                │                │                   │              │
-        └─────────┼────────────────┼────────────────┼───────────────────┼──────────────┘
-                  │                │                │                   │
-                  ▼                ▼                ▼                   ▼
-        ┌──────────────────────────────────────────────────────────────────────────────┐
-        │                                DOMAIN LAYER                                  │
-        ├──────────────────────────────────────────────────────────────────────────────┤
-        │                                                                              │
-        │   ┌──────────────────────────────────────────────────────────────────────┐   │
-        │   │                      ORCHESTRATOR AGENT (V2)                         │   │
-        │   │                                                                      │   │
-        │   │  supervisor → planner → dispatcher_parallel → collector              │   │
-        │   │                                    ↓                                 │   │
-        │   │                                validator                             │   │
-        │   │                        (retry loop) ↓                                │   │
-        │   │                           analyzer → synthesizer → emailer           │   │
-        │   └──────────────────────────────────────────────────────────────────────┘   │
-        │                                                                              │
-        │   ┌──────────────────────────────────────────────────────────────────────┐   │
-        │   │                       SPECIALIST AGENTS                              │   │
-        │   │                                                                      │   │
-        │   │   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │   │
-        │   │   │ Newsletter   │  │ DeepResearch │  │ DeepResearch │               │   │
-        │   │   │    (V1)      │  │ Supervisor   │  │ Researcher   │               │   │
-        │   │   └──────────────┘  └──────────────┘  └──────────────┘               │   │
-        │   │                                                                      │   │
-        │   └──────────────────────────────────────────────────────────────────────┘   │
-        │                                                                              │
-        └──────────────────────────────────────────────────────────────────────────────┘
-                                            │
-                                            ▼
-        ┌──────────────────────────────────────────────────────────────────────────────┐
-        │                         SKILLS & TOOLS LAYER                                 │
-        ├──────────────────────────────────────────────────────────────────────────────┤
-        │                                                                              │
-        │   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐             │
-        │   │ web_fetch  │  │  social_   │  │  research  │  │  analysis  │             │
-        │   │  skill     │  │   monitor  │  │   _paper   │  │   _insights│             │
-        │   └────────────┘  └────────────┘  └────────────┘  └────────────┘             │
-        │                                                                              │
-        │   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐             │
-        │   │Web Search  │  │  GitHub    │  │  Reddit    │  │   ArXiv    │             │
-        │   │   Tool     │  │ Watch Tool │  │ Watch Tool │  │ Watch Tool │             │
-        │   └────────────┘  └────────────┘  └────────────┘  └────────────┘             │
-        │                                                                              │
-        │   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐             │
-        │   │ RSS Feed   │  │ YouTube    │  │Research    │  │ Custom     │             │
-        │   │   Tool     │  │Transcript  │  │  Papers    │  │ Plugins    │             │
-        │   └────────────┘  └────────────┘  └────────────┘  └────────────┘             │
-        │                                                                              │
-        └──────────────────────────────────────────────────────────────────────────────┘
-                                            │
-                                            ▼
-        ┌──────────────────────────────────────────────────────────────────────────────┐
-        │                              RAG / MEMORY LAYER                              │
-        ├──────────────────────────────────────────────────────────────────────────────┤
-        │                                                                              │
-        │   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────────┐   │
-        │   │   Vector Store   │  │  Article Store   │  │ Session / User Context   │   │
-        │   │    pgvector      │  │                  │  │        Manager           │   │
-        │   └──────────────────┘  └──────────────────┘  └──────────────────────────┘   │
-        │                                                                              │
-        └──────────────────────────────────────────────────────────────────────────────┘
-                                            │
-                                            ▼
-        ┌──────────────────────────────────────────────────────────────────────────────┐
-        │                             PERSISTENCE LAYER                                │
-        ├──────────────────────────────────────────────────────────────────────────────┤
-        │                                                                              │
-        │   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────────┐   │
-        │   │   PostgreSQL     │  │      Redis       │  │      File Storage        │   │
-        │   │ Metadata & State │  │ Cache / Queueing │  │   Articles / Snapshots   │   │
-        │   └──────────────────┘  └──────────────────┘  └──────────────────────────┘   │
-        │                                                                              │
-        └──────────────────────────────────────────────────────────────────────────────┘
-
-```
+- **Memory Layer**: Article store, vector store (hybrid search), session store
+- **Email Delivery**: Gmail OAuth with HTML/text rendering + source citations
 
 ## Quick Start
 
@@ -329,31 +226,39 @@ RECIPIENT_EMAILS=recipient1@example.com,recipient2@example.com
 app/
 ├── agents/              # AI agent implementations
 │   ├── base/            # Base agent framework
-│   ├── orchestrator/    # V2 orchestrator (plan -> research -> report)
-│   ├── newsletter/       # V1 newsletter agent
+│   ├── orchestrator/    # V2 orchestrator (plan → research → report)
+│   │   ├── nodes.py     # supervisor, planner, dispatcher, collector, synthesizer
+│   │   ├── state.py     # OrchestratorState, PlanStep, StepType
+│   │   └── prompts.py   # Agent prompts
+│   ├── newsletter/      # V2 newsletter agent
+│   │   ├── agent.py     # NewsletterAgent with async setup/execute
+│   │   ├── nodes.py     # async nodes: researcher, analyst, opinion_writer, editor
+│   │   ├── graph.py     # LangGraph workflow with quality routing
+│   │   └── state.py     # NewsletterState
 │   └── deep_research/   # Deep research agent
+│       ├── nodes.py     # supervisor, researcher, PDF extraction
+│       ├── graph.py     # LangGraph workflow
+│       └── simple_agent.py  # Simplified fallback agent
 ├── api/                 # FastAPI endpoints
 ├── config/              # Configuration management
 ├── core/                # Core utilities (logging, models)
-├── db/                  # Database layer
+├── db/                  # Database layer (models, base, migrations)
 ├── delivery/            # Email delivery (Gmail, renderer)
-├── memory/              # Memory/RAG layer
+├── rag/                 # Vector store with pgvector + hybrid search
 ├── scheduler/           # Task scheduling
 ├── services/            # Business logic
+│   ├── article_service.py   # Article persistence with deduplication
+│   ├── embedding/        # Real embeddings (OpenAI, Z.ai, Ollama)
 │   └── llm/             # Multi-provider LLM
-│       └── providers.py # Provider registry
 ├── skills/              # Agent skill modules
-│   ├── base.py         # Base skill interface
-│   ├── registry.py     # Skill registry
-│   └── predefined/      # Predefined skills
-└── tools/               # Tool plugins
-    ├── base.py         # Base tool interface
-    ├── registry.py     # Tool registry
-    ├── web/            # Web tools (search, crawl)
-    └── social/          # Social tools (GitHub, Reddit, etc.)
+├── tools/               # Tool plugins
+│   ├── base.py         # BaseTool, ToolCategory, ToolResult
+│   ├── memory/          # Memory tools (SearchMemory, GetRecentContext)
+│   ├── web/             # Web tools (search, crawl, tavily, openalex, pdf_downloader)
+│   └── social/          # Social tools (GitHub, Reddit, ArXiv, YouTube)
 
 alembic/                 # Database migrations
-tests/                   # Unit tests
+tests/                   # 127 unit tests
 docker/                  # Docker configuration
 ```
 
@@ -397,25 +302,6 @@ class MyTool(BaseTool):
         return {"success": True, "data": ..., "error": None, "metadata": {}}
 ```
 
-### Creating a New Skill
-
-```python
-from app.skills.base import BaseSkill, SkillResult
-
-class WebResearchSkill(BaseSkill):
-    @property
-    def name(self) -> str:
-        return "web_research"
-
-    @property
-    def description(self) -> str:
-        return "Advanced web research with adaptive parsing"
-
-    async def execute(self, params: dict, context: dict) -> SkillResult:
-        # Skill logic with access to tools and LLM
-        return SkillResult(success=True, data=..., message="...")
-```
-
 ### Creating a New Agent
 
 ```python
@@ -440,6 +326,7 @@ class MyAgent(BaseAgent):
 - **SQLAlchemy 2.0** - ORM (async)
 - **PostgreSQL** - Database with pgvector
 - **Redis** - Caching and task queue
+- **PyMuPDF** - PDF text extraction
 - **Alembic** - Database migrations
 - **Docker** - Containerization
 

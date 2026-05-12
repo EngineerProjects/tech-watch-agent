@@ -92,6 +92,7 @@ class DeepResearchNodes:
         self._github_tool = None
         self._arxiv_tool = None
         self._openalex_tool = None
+        self._pdf_downloader = None
 
     @property
     def llm_client(self):
@@ -164,8 +165,19 @@ class DeepResearchNodes:
             self._openalex_tool = OpenAlexTool()
         return self._openalex_tool
 
+    def _get_pdf_downloader(self) -> Any:
+        """Lazy load PDF downloader tool."""
+        if self._pdf_downloader is None:
+            from app.tools.web.pdf_downloader import PDFDownloaderTool, ArXivPDFTool
+            self._pdf_downloader = PDFDownloaderTool()
+            self._arxiv_pdf_tool = ArXivPDFTool()
+        return self._pdf_downloader
+
     async def _search_with_fallback(self, query: str) -> dict[str, Any]:
-        """Execute search with multi-tool fallback chain."""
+        """Execute search with multi-tool fallback chain.
+
+        For academic results (ArXiv, OpenAlex), also extracts full PDF content.
+        """
         # Try Tavily first
         tavily = self._get_tavily_tool()
         if tavily._api_key:
@@ -192,10 +204,20 @@ class DeepResearchNodes:
                 result = await openalex.execute({"query": query, "limit": 5})
                 if result.get("success"):
                     data = result.get("data", {})
-                    # Standardize format for OpenAlex results
                     papers = data.get("results", [])
+                    # Extract PDF content for each paper
+                    for paper in papers:
+                        pdf_url = paper.get("pdf_url")
+                        if pdf_url:
+                            pdf_text = await self._extract_pdf_content(pdf_url)
+                            if pdf_text:
+                                paper["content"] = pdf_text[:8000]
                     formatted_results = [
-                        {"title": p.get("title"), "url": p.get("url"), "content": f"Authors: {', '.join(p.get('authors', []))}. Year: {p.get('year')}. Cited by: {p.get('cited_by')}"}
+                        {
+                            "title": p.get("title"),
+                            "url": p.get("url"),
+                            "content": p.get("content", f"Authors: {', '.join(p.get('authors', []))}. Year: {p.get('year')}. Cited by: {p.get('cited_by')}"),
+                        }
                         for p in papers
                     ]
                     return {"results": formatted_results}
@@ -208,8 +230,24 @@ class DeepResearchNodes:
             result = await arxiv.execute({"action": "search", "query": query, "limit": 5})
             if result.get("success"):
                 papers = result.get("data", [])
+                # For ArXiv, download and extract PDF text for top results
+                for paper in papers:
+                    paper_url = paper.get("url", "")
+                    if "arxiv.org/abs/" in paper_url or paper_url.startswith("http"):
+                        pdf_url = self._arxiv_to_pdf_url(paper_url)
+                        if pdf_url:
+                            pdf_text = await self._extract_pdf_content(pdf_url)
+                            if pdf_text:
+                                paper["content"] = pdf_text[:8000]
+                            else:
+                                paper["content"] = paper.get("abstract", "")
+                        else:
+                            paper["content"] = paper.get("abstract", "")
+                    else:
+                        paper["content"] = paper.get("abstract", "")
+
                 formatted_results = [
-                    {"title": p.get("title"), "url": p.get("url"), "content": p.get("abstract")}
+                    {"title": p.get("title"), "url": p.get("url"), "content": p.get("content")}
                     for p in papers
                 ]
                 return {"results": formatted_results}
@@ -243,6 +281,14 @@ class DeepResearchNodes:
             logger.debug("Web search failed: %s", exc)
 
         return {"results": [], "answer": ""}
+
+    @staticmethod
+    def _arxiv_to_pdf_url(url: str) -> str:
+        """Convert ArXiv abstract URL to PDF URL."""
+        match = re.search(r"arxiv\.org/abs/([0-9.]+(?:v\d+)?)", url)
+        if match:
+            return f"https://arxiv.org/pdf/{match.group(1)}.pdf"
+        return ""
 
     async def _extract_content_parallel(self, urls: list[dict]) -> list[dict]:
         """Extract content from multiple URLs in parallel.
@@ -286,30 +332,13 @@ class DeepResearchNodes:
         return [r for r in results if isinstance(r, dict) and r.get("content")]
 
     async def _extract_content(self, url: str) -> Optional[str]:
-        """Extract clean content from a URL using content_extractor or research_paper tool."""
+        """Extract clean content from a URL using content_extractor, PDF downloader, or research_paper tool."""
         if not url:
             return None
-            
-        # If it's a PDF, use specialized research paper tool
+
+        # If it's a PDF, use the PDF downloader tool
         if url.lower().endswith(".pdf") or "arxiv.org/pdf" in url.lower():
-            try:
-                research_paper = self._get_research_paper_tool()
-                # We need pymupdf installed for this to work
-                result = await research_paper.execute({
-                    "action": "extract_text",
-                    "url": url,
-                    "extract_sections": True
-                })
-                if result.get("success"):
-                    data = result.get("data", {})
-                    text = data.get("text", "")
-                    # Prepend metadata if available
-                    sections = data.get("sections", {})
-                    if sections:
-                        text = f"Sections Extracted:\n{json.dumps(sections, indent=2)}\n\nFull Text Snippet:\n{text[:5000]}"
-                    return text
-            except Exception as exc:
-                logger.warning("PDF extraction failed for %s: %s", url, exc)
+            return await self._extract_pdf_content(url)
 
         try:
             extractor = self._get_content_extractor()
@@ -323,6 +352,102 @@ class DeepResearchNodes:
         except Exception as exc:
             logger.warning("Content extraction failed for %s: %s", url, exc)
         return None
+
+    async def _extract_pdf_content(self, url: str) -> Optional[str]:
+        """Extract text content from a PDF URL.
+
+        Uses the PDF downloader tool to download and parse the PDF,
+        extracting text for research analysis.
+
+        Args:
+            url: PDF URL (ArXiv, direct PDF, etc.)
+
+        Returns:
+            Extracted text content or None on failure
+        """
+        try:
+            pdf_tool = self._get_pdf_downloader()
+            result = await pdf_tool.execute({
+                "url": url,
+                "max_pages": 30,
+                "extract_metadata": True,
+                "source": self._detect_pdf_source(url),
+            })
+
+            if result.get("success"):
+                data = result.get("data", {})
+                text = data.get("text", "")
+                metadata = {
+                    "title": data.get("title", ""),
+                    "author": data.get("author", ""),
+                    "total_pages": data.get("total_pages", 0),
+                    "pages_extracted": data.get("pages_extracted", 0),
+                    "arxiv_id": data.get("arxiv_id", ""),
+                }
+
+                header = f"[PDF Document] {metadata.get('title', url)}\n"
+                if metadata.get("author"):
+                    header += f"Author: {metadata['author']}\n"
+                if metadata.get("total_pages"):
+                    header += f"Pages: {metadata['pages_extracted']}/{metadata['total_pages']}\n"
+                header += f"Source: {url}\n\n"
+
+                sections = self._extract_pdf_sections(text)
+                if sections:
+                    header += f"Sections: {', '.join(sections.keys())}\n\n"
+                    for section_name, section_text in sections.items():
+                        header += f"--- {section_name.upper()} ---\n{section_text[:500]}\n\n"
+
+                return header + f"[Content]\n{text[:10000]}"
+
+            logger.warning("PDF extraction failed for %s: %s", url, result.get("error"))
+        except Exception as exc:
+            logger.warning("PDF extraction error for %s: %s", url, exc)
+        return None
+
+    @staticmethod
+    def _detect_pdf_source(url: str) -> str:
+        """Detect the source of a PDF URL."""
+        if "arxiv.org" in url:
+            return "arxiv"
+        elif "semantic" in url:
+            return "semantic_scholar"
+        elif "openalex" in url:
+            return "openalex"
+        return "direct"
+
+    @staticmethod
+    def _extract_pdf_sections(text: str) -> dict[str, str]:
+        """Extract key sections from PDF text.
+
+        Args:
+            text: Full PDF text
+
+        Returns:
+            Dict of section_name -> section_text (first 500 chars)
+        """
+        sections = {}
+        patterns = [
+            (r"(?i)\bAbstract\b", "abstract"),
+            (r"(?i)^\s*1\.?\s*Introduction\b", "introduction"),
+            (r"(?i)^\s*2\.?\s*Background\b", "background"),
+            (r"(?i)^\s*3\.?\s*Related Work\b", "related_work"),
+            (r"(?i)^\s*4\.?\s*Method\b", "methodology"),
+            (r"(?i)^\s*5\.?\s*Experiment", "experiments"),
+            (r"(?i)^\s*6\.?\s*Results?\b", "results"),
+            (r"(?i)^\s*7\.?\s*Discussion\b", "discussion"),
+            (r"(?i)^\s*8\.?\s*Conclusion\b", "conclusion"),
+        ]
+
+        text_lines = text.split("\n")
+        for pattern, section_name in patterns:
+            for i, line in enumerate(text_lines):
+                if re.search(pattern, line):
+                    section_text = " ".join(text_lines[i : i + 10])
+                    sections[section_name] = section_text[:500]
+                    break
+
+        return sections
 
     async def _summarize_content(self, content: str, topic: str) -> Optional[Summary]:
         """Summarize webpage content specifically for the research topic."""

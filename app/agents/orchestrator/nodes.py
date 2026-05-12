@@ -28,6 +28,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
+from app.agents.newsletter.agent import NewsletterAgent, NewsletterAgentConfig
 from app.agents.orchestrator.state import (
     OrchestratorState,
     PlanStep,
@@ -318,6 +319,9 @@ class OrchestratorNodes:
                     "timestamp": datetime.now().isoformat(),
                 })
                 logger.info("Step '%s' completed with %d results", step_id, len(data) if isinstance(data, list) else 1)
+
+                if isinstance(data, list):
+                    await self._persist_articles_from_step(data, step_name, tool_name or "deep_research")
             else:
                 plan[current_idx]["status"] = StepStatus.FAILED
                 plan[current_idx]["error"] = error or "Unknown error"
@@ -374,6 +378,8 @@ class OrchestratorNodes:
                             "query": query,
                             "metadata": {"parent_task_id": state.get("task_id")}
                         })
+                    elif step_type == StepType.NEWSLETTER:
+                        result = await self._call_newsletter_agent(state, step)
                     else:
                         tool = self._get_tool(current_tool)
                         if tool is None:
@@ -471,7 +477,10 @@ class OrchestratorNodes:
         return state
 
     async def collector(self, state: OrchestratorState) -> OrchestratorState:
-        """Aggregate all research results into a unified corpus."""
+        """Aggregate all research results into a unified corpus.
+
+        Also persists articles to the database for future retrieval.
+        """
         research_results = state.get("research_results", [])
         task = state.get("task", "")
 
@@ -480,6 +489,8 @@ class OrchestratorNodes:
             return state
 
         corpus_parts = []
+        articles_to_store = []
+
         for r in research_results:
             tool = r.get("tool", "unknown")
             data = r.get("data", [])
@@ -491,6 +502,7 @@ class OrchestratorNodes:
                 for item in data[:self._max_articles]:
                     if isinstance(item, dict):
                         items.append(f"- {item.get('title', item.get('name', str(item)))}: {item.get('summary', item.get('description', ''))[:200]}")
+                        articles_to_store.append(item)
                     elif isinstance(item, str):
                         items.append(f"- {item}")
                     else:
@@ -513,12 +525,187 @@ class OrchestratorNodes:
             )
             state["articles"] = research_results
             logger.info("Collector aggregated %d result sets", len(research_results))
+
+            await self._persist_articles(articles_to_store)
+
         except Exception as exc:
             logger.error("Collector failed: %s", exc)
             state["articles"] = research_results
             state["errors"] = state.get("errors", []) + [f"Collector error: {exc}"]
 
         return state
+
+    async def _persist_articles(self, articles: list[dict]) -> None:
+        """Persist articles to database for future retrieval.
+
+        Uses ArticleService to store with deduplication.
+        """
+        if not articles:
+            return
+
+        try:
+            from app.services.article_service import ArticleService
+
+            article_service = ArticleService()
+            await article_service.save_articles(articles)
+            logger.info("Persisted %d articles to database", len(articles))
+        except Exception as exc:
+            logger.warning("Failed to persist articles: %s", exc)
+
+    async def _persist_articles_from_step(
+        self,
+        articles: list,
+        step_name: str,
+        tool_name: str,
+    ) -> None:
+        """Persist articles from a single research step to database.
+
+        Args:
+            articles: List of article data (dicts) from the step
+            step_name: Name of the step that produced the articles
+            tool_name: Name of the tool used to fetch articles
+        """
+        if not articles:
+            return
+
+        try:
+            from app.services.article_service import ArticleService
+
+            enriched_articles = []
+            for item in articles:
+                if isinstance(item, dict):
+                    enriched = {
+                        "title": item.get("title", item.get("name", "")),
+                        "summary": item.get("summary", item.get("description", "")),
+                        "url": item.get("url", ""),
+                        "topic": step_name,
+                        "source": tool_name,
+                        "published_date": item.get("published_date", item.get("date", "")),
+                    }
+                    enriched_articles.append(enriched)
+
+            if enriched_articles:
+                article_service = ArticleService()
+                await article_service.save_articles(enriched_articles)
+                logger.info(
+                    "Persisted %d articles from step '%s' via %s",
+                    len(enriched_articles),
+                    step_name,
+                    tool_name,
+                )
+        except Exception as exc:
+            logger.warning("Failed to persist articles from step '%s': %s", step_name, exc)
+
+    async def _call_newsletter_agent(
+        self,
+        state: OrchestratorState,
+        step: PlanStep,
+    ) -> dict:
+        """Call NewsletterAgent as a sub-agent.
+
+        The NewsletterAgent handles article collection, analysis, and
+        newsletter composition. We pass the orchestrator's task and
+        collected research results to it.
+
+        Args:
+            state: Current orchestrator state
+            step: The plan step containing newsletter configuration
+
+        Returns:
+            Dict with success status and newsletter data
+        """
+        try:
+            from app.agents.newsletter.agent import NewsletterAgent
+            from app.core.models import Article
+
+            task = state.get("task", "")
+            topics = state.get("topics", [])
+
+            articles_input = None
+            research_results = state.get("research_results", [])
+            if research_results:
+                articles_input = self._extract_articles_from_results(research_results)
+                logger.info("Passing %d articles from orchestrator to NewsletterAgent", len(articles_input))
+
+            params = step.get("params", {}) or {}
+
+            agent = NewsletterAgent(
+                config=NewsletterAgentConfig(
+                    topics=topics if topics else [task],
+                    send_email=False,
+                    max_articles_per_topic=params.get("max_articles", 10),
+                )
+            )
+
+            result = await agent.execute({
+                "topics": topics if topics else [task],
+                "articles": articles_input,
+            })
+
+            if result.success:
+                return {
+                    "success": True,
+                    "data": {
+                        "newsletter_generated": True,
+                        "subject": result.data.get("subject", task),
+                        "content": result.data.get("newsletter", ""),
+                        "articles_count": result.metadata.get("article_count", 0),
+                        "quality_score": result.metadata.get("quality_score", 0),
+                    },
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.error or "Newsletter agent failed",
+                }
+
+        except Exception as exc:
+            logger.error("Newsletter agent call failed: %s", exc)
+            return {"success": False, "error": str(exc)}
+
+    def _extract_articles_from_results(
+        self,
+        research_results: list[dict],
+    ) -> list[Article]:
+        """Convert orchestrator research results into Article objects.
+
+        Args:
+            research_results: List of research result dicts
+
+        Returns:
+            List of Article objects
+        """
+        from app.core.models import Article
+
+        articles = []
+        seen_urls: set[str] = set()
+
+        for result in research_results:
+            data = result.get("data", [])
+            if not isinstance(data, list):
+                continue
+
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+
+                url = item.get("url", "")
+                if not url or url in seen_urls:
+                    continue
+
+                seen_urls.add(url)
+                article = Article(
+                    title=item.get("title", item.get("name", "")),
+                    summary=item.get("summary", item.get("description", "")),
+                    url=url,
+                    topic=result.get("step_name", "unknown"),
+                    source=item.get("source", result.get("tool", "orchestrator")),
+                    published_date=item.get("published_date", item.get("date", "")),
+                    content=item.get("content", item.get("text", "")),
+                )
+                articles.append(article)
+
+        return articles
 
     async def validator(self, state: OrchestratorState) -> OrchestratorState:
         """Validate that collected results meet quality thresholds.
@@ -641,7 +828,10 @@ class OrchestratorNodes:
         return state
 
     async def synthesizer(self, state: OrchestratorState) -> OrchestratorState:
-        """Create the final comprehensive report."""
+        """Create the final comprehensive report.
+
+        Also stores the report in ResearchSession for future reference.
+        """
         research_results = state.get("research_results", [])
         analysis = state.get("analysis_results", "")
         task = state.get("task", "")
@@ -686,11 +876,58 @@ class OrchestratorNodes:
             state["synthesis_result"] = report[:500] + "..." if len(report) > 500 else report
             state["completed_at"] = datetime.now().isoformat()
             logger.info("Synthesizer completed report (%d chars)", len(report))
+
+            await self._persist_research_session(state, task)
+
         except Exception as exc:
             logger.error("Synthesizer failed: %s", exc)
             state["errors"] = state.get("errors", []) + [f"Synthesizer error: {exc}"]
 
         return state
+
+    async def _persist_research_session(
+        self,
+        state: OrchestratorState,
+        task: str,
+    ) -> None:
+        """Persist research results and report to ResearchSession."""
+        try:
+            from app.db.base import get_db_context
+            from app.db.models import ResearchSession
+            import uuid
+
+            research_results = state.get("research_results", [])
+            notes = []
+            raw_notes = []
+
+            for r in research_results:
+                tool = r.get("tool", "")
+                step_name = r.get("step_name", "")
+                data = r.get("data", [])
+                if isinstance(data, list):
+                    for item in data[:5]:
+                        if isinstance(item, dict):
+                            title = item.get("title", item.get("name", ""))
+                            summary = item.get("summary", item.get("description", ""))
+                            raw_notes.append(f"[{step_name}/{tool}] {title}: {summary[:200]}")
+
+            session = ResearchSession(
+                id=uuid.uuid4(),
+                user_id=None,
+                research_brief=task[:500],
+                final_report=state.get("final_report", ""),
+                notes=notes,
+                raw_notes=raw_notes,
+                status="completed",
+            )
+
+            async with get_db_context() as db_session:
+                db_session.add(session)
+                await db_session.commit()
+                logger.info("Stored research session with %d notes", len(raw_notes))
+
+        except Exception as exc:
+            logger.warning("Failed to persist research session: %s", exc)
 
     async def emailer(self, state: OrchestratorState) -> OrchestratorState:
         """Send the final report via email."""

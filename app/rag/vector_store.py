@@ -212,49 +212,72 @@ class VectorStore:
         top_k: int = 10,
         filter_metadata: Optional[dict[str, Any]] = None,
         similarity_threshold: float = 0.0,
+        keywords: Optional[list[str]] = None,
+        days_limit: int = 30,
     ) -> Sequence[SearchResult]:
-        """Search for similar vectors.
+        """Search for similar vectors with optional keyword filtering.
 
         Uses cosine similarity to find the most similar vectors.
 
         Args:
             query_embedding: The query embedding vector
             top_k: Maximum number of results to return
-            filter_metadata: Optional metadata filters
+            filter_metadata: Optional metadata filters (key-value pairs to match)
             similarity_threshold: Minimum similarity score (0.0 to 1.0)
+            keywords: Optional list of keywords to filter results (AND logic)
+            days_limit: Maximum age of results in days (default 30)
 
         Returns:
             List of SearchResult objects ordered by similarity
         """
         try:
-            # Ensure query embedding dimension
             if len(query_embedding) != self.config.dimension:
                 query_embedding = self._pad_or_truncate_embedding(query_embedding)
 
-            # Normalize query embedding if configured
             if self.config.normalize:
                 import math
                 norm = math.sqrt(sum(x * x for x in query_embedding))
                 if norm > 0:
                     query_embedding = [x / norm for x in query_embedding]
 
-            # Build and execute similarity search query
-            # Using pgvector's <=> operator for cosine distance
+            where_clauses = [f"created_at > NOW() - INTERVAL '{days_limit} days'"]
+
+            if keywords:
+                keyword_filters = " AND ".join(
+                    f"metadata::text ILIKE :kw_{i}" for i in range(len(keywords))
+                )
+                where_clauses.append(f"({keyword_filters})")
+
+            if filter_metadata:
+                for key, value in filter_metadata.items():
+                    where_clauses.append(f"metadata->>:key = :val_{key}")
+
+            where_sql = " AND ".join(where_clauses)
+
+            params: dict[str, Any] = {
+                "query_embedding": query_embedding,
+                "top_k": top_k,
+            }
+
+            for i, kw in enumerate(keywords or []):
+                params[f"kw_{i}"] = f"%{kw}%"
+
+            if filter_metadata:
+                for key, value in filter_metadata.items():
+                    params[f"val_{key}"] = value
+
             result = await self.session.execute(
-                text("""
+                text(f"""
                     SELECT
                         id,
                         metadata,
                         1 - (embedding <=> :query_embedding) as similarity
                     FROM article_embeddings
-                    WHERE created_at > NOW() - INTERVAL '30 days'
+                    WHERE {where_sql}
                     ORDER BY embedding <=> :query_embedding
                     LIMIT :top_k
                 """),
-                {
-                    "query_embedding": query_embedding,
-                    "top_k": top_k,
-                }
+                params
             )
 
             results = []
