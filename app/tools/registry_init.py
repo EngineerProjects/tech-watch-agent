@@ -131,6 +131,22 @@ def initialize_tools() -> None:
     except ImportError as e:
         logger.warning(f"Could not import StoreResearchContextTool: {e}")
 
+    # Delivery Tools
+    try:
+        from app.tools.delivery.email_tool import EmailTool, EmailPreviewTool
+
+        email_tool = EmailTool()
+        register_tool(email_tool)
+        tools_registered += 1
+        logger.info("Registered Email tool")
+
+        email_preview_tool = EmailPreviewTool()
+        register_tool(email_preview_tool)
+        tools_registered += 1
+        logger.info("Registered Email Preview tool")
+    except ImportError as e:
+        logger.warning(f"Could not import Email tools: {e}")
+
     logger.info(f"Tool initialization complete: {tools_registered} tools registered")
 
 

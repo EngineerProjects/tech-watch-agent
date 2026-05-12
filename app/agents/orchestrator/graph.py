@@ -119,8 +119,15 @@ class OrchestratorGraphBuilder:
 
         workflow.add_edge("supervisor", "planner")
 
-        # After planning, try parallel dispatch first
-        workflow.add_edge("planner", "dispatcher_parallel")
+        # Plan mode strict: retry planner up to max retries, then proceed
+        workflow.add_conditional_edges(
+            "planner",
+            self._route_after_planner,
+            {
+                "retry": "planner",
+                "continue": "dispatcher_parallel",
+            }
+        )
 
         # dispatcher_parallel handles all pending research steps then goes to collector
         workflow.add_edge("dispatcher_parallel", "collector")
@@ -171,6 +178,29 @@ class OrchestratorGraphBuilder:
         if current_idx < len(plan):
             return "continue"
         return "collect"
+
+    def _route_after_planner(self, state: OrchestratorState) -> Literal["retry", "continue"]:
+        """Route after planner: retry if plan validation failed, otherwise continue.
+        
+        PLAN MODE STRICT: Routes back to planner if plan attempts < max_retries
+        and no valid plan was generated.
+        """
+        plan = state.get("plan", [])
+        plan_attempts = state.get("plan_attempts", 0)
+        max_retries = state.get("max_plan_retries", 3)
+        
+        # If we have a valid plan with at least one step, proceed
+        if plan and len(plan) > 0:
+            return "continue"
+        
+        # If we haven't exceeded max retries, try again
+        if plan_attempts < max_retries:
+            logger.info("Plan invalid, retrying planner (attempt %d/%d)", 
+                       plan_attempts + 1, max_retries)
+            return "retry"
+        
+        # Max retries exceeded, use fallback (should have a plan now)
+        return "continue"
 
     def _route_after_validation(self, state: OrchestratorState) -> Literal["retry", "approval"]:
         errors = state.get("validation_errors", [])

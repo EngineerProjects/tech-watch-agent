@@ -67,6 +67,118 @@ FALLBACK_TOOLS = {
 }
 
 
+# Step types that CAN run in parallel (no resource conflicts)
+PARALLELIZABLE_STEP_TYPES = {
+    StepType.RESEARCH,
+    StepType.DEEP_RESEARCH,
+    StepType.NEWSLETTER,
+    StepType.CRAWL,
+    StepType.SEARCH,
+    StepType.SOCIAL,
+    StepType.PAPER,
+    StepType.VIDEO,
+}
+
+# Step types that MUST run SEQUENTIALLY
+SEQUENTIAL_ONLY_STEP_TYPES = {
+    StepType.SYNTHESIS,
+    StepType.ANALYSIS,
+    StepType.EMAIL,
+    StepType.VALIDATION,
+    StepType.COLLECTION,
+    StepType.SUMMARY,
+}
+
+
+def analyze_step_dependencies(plan: list[PlanStep]) -> dict[str, list[str]]:
+    """Analyze dependencies between steps.
+    
+    Returns a dict mapping step_id to list of step_ids it depends on.
+    
+    Dependency rules:
+    - Steps with same tool that modifies state: sequential
+    - Steps after SYNTHESIS/ANALYSIS: depend on earlier results
+    - EMAIL: depends on SYNTHESIS completion
+    """
+    dependencies: dict[str, list[str]] = {}
+    step_types_by_idx: dict[int, StepType] = {}
+    step_ids_by_idx: dict[int, str] = {}
+    
+    # First pass: map indices and types
+    for idx, step in enumerate(plan):
+        step_id = step.get("step_id", f"idx_{idx}")
+        step_type = step.get("step_type")
+        step_ids_by_idx[idx] = step_id
+        step_types_by_idx[idx] = step_type
+        
+        # By default, no dependencies
+        dependencies[step_id] = []
+    
+    # Second pass: identify dependencies
+    for idx, step in enumerate(plan):
+        step_id = step.get("step_id", f"idx_{idx}")
+        step_type = step.get("step_type")
+        
+        # SYNTHESIS/ANALYSIS depend on all research steps before them
+        if step_type in {StepType.SYNTHESIS, StepType.ANALYSIS}:
+            for prev_idx in range(idx):
+                prev_type = step_types_by_idx.get(prev_idx)
+                if prev_type in PARALLELIZABLE_STEP_TYPES:
+                    dependencies[step_id].append(step_ids_by_idx[prev_idx])
+        
+        # EMAIL depends on SYNTHESIS
+        if step_type == StepType.EMAIL:
+            for prev_idx in range(idx):
+                prev_type = step_types_by_idx.get(prev_idx)
+                if prev_type == StepType.SYNTHESIS:
+                    dependencies[step_id].append(step_ids_by_idx[prev_idx])
+                    break
+            else:
+                # EMAIL depends on previous analysis
+                for prev_idx in range(idx):
+                    prev_type = step_types_by_idx.get(prev_idx)
+                    if prev_type == StepType.ANALYSIS:
+                        dependencies[step_id].append(step_ids_by_idx[prev_idx])
+                        break
+    
+    return dependencies
+
+
+def group_parallel_steps(plan: list[PlanStep]) -> tuple[list[list[int]], list[int]]:
+    """Group steps by parallelization potential.
+    
+    Returns:
+        - parallel_groups: List of step index groups that can run in parallel
+        - sequential_indices: Indices of steps that must run sequentially
+    
+    Algorithm:
+    1. Identify sequential-only steps (SYNTHESIS, EMAIL, etc.)
+    2. Group remaining steps by step_type (same type = can run parallel)
+    3. Steps with same type can run together
+    """
+    parallelizable_indices: list[int] = []
+    sequential_indices: list[int] = []
+    
+    for idx, step in enumerate(plan):
+        step_type = step.get("step_type")
+        
+        if step_type in SEQUENTIAL_ONLY_STEP_TYPES:
+            sequential_indices.append(idx)
+        else:
+            parallelizable_indices.append(idx)
+    
+    # Group parallelizable by step_type
+    by_type: dict[StepType, list[int]] = {}
+    for idx in parallelizable_indices:
+        step_type = plan[idx].get("step_type")
+        if step_type not in by_type:
+            by_type[step_type] = []
+        by_type[step_type].append(idx)
+    
+    parallel_groups = list(by_type.values())
+    return parallel_groups, sequential_indices
+
+
 def _parse_json_safe(text: str) -> Any:
     """Parse JSON from LLM output, handling markdown code blocks."""
     text = text.strip()
@@ -152,10 +264,19 @@ class OrchestratorNodes:
         return state
 
     async def planner(self, state: OrchestratorState) -> OrchestratorState:
-        """Generate execution plan from task using LLM."""
+        """Generate execution plan from task using LLM.
+        
+        PLAN MODE STRICT:
+        - Must generate a valid plan with at least 1 step
+        - Each step must have required fields (step_id, name, step_type)
+        - Retries up to max_plan_retries times before using fallback
+        - Cannot exit without a complete plan
+        """
         task = state.get("task", "")
-        # Get topics from metadata or use task if not provided
         topics = state.get("metadata", {}).get("topics", task)
+        
+        max_plan_retries = state.get("max_plan_retries", 3)
+        plan_attempts = state.get("plan_attempts", 0)
 
         client = self._client()
         prompt = PLANNER_USER.format(
@@ -164,11 +285,32 @@ class OrchestratorNodes:
         )
 
         try:
-            logger.info("Generating plan for task: %s", task[:100])
+            logger.info("Generating plan for task: %s (attempt %d/%d)", 
+                       task[:100], plan_attempts + 1, max_plan_retries)
+            
             response = await client.async_generate_completion(
                 prompt=prompt,
-                system_message="You are a Planning Agent. Create structured execution plans. Use 'deep_research' for complex technical topics.",
-                temperature=0.3,
+                system_message="""You are a Planning Agent. Create structured execution plans.
+
+CRITICAL: You MUST return valid JSON that conforms to this exact schema:
+[
+  {
+    "step_id": "step_1",
+    "name": "Short name",
+    "description": "What this step does",
+    "step_type": "research|deep_research|analysis|synthesis|email|newsletter",
+    "tool_name": "tool_name",
+    "params": {}
+  }
+]
+
+Rules:
+- step_id must be unique (step_1, step_2, etc.)
+- name must be 1-50 characters
+- step_type must be one of the valid types
+- tool_name must be a registered tool name
+- Return ONLY valid JSON array, no markdown, no explanation""",
+                temperature=0.2,
                 max_tokens=3000,
             )
 
@@ -176,22 +318,29 @@ class OrchestratorNodes:
                 raise ValueError("LLM returned empty response for planner")
 
             plan_data = _parse_json_safe(response)
-            if not isinstance(plan_data, list) or not plan_data:
-                logger.warning("Planner returned invalid or empty JSON. Falling back to default deep research plan.")
-                plan_data = [
-                    {
-                        "step_id": "step_1",
-                        "name": "Deep Research",
-                        "description": f"Conduct deep research on {task}",
-                        "step_type": "deep_research",
-                        "tool_name": "deep_research"
-                    }
-                ]
+            
+            # Strict validation: must be a non-empty list
+            if not isinstance(plan_data, list) or len(plan_data) == 0:
+                raise ValueError("Planner returned empty or invalid plan")
+            
+            # Validate each step has required fields
+            for i, step in enumerate(plan_data):
+                if not isinstance(step, dict):
+                    raise ValueError(f"Step {i} is not a valid object")
+                if "step_id" not in step:
+                    step["step_id"] = f"step_{i+1}"
+                if "name" not in step:
+                    raise ValueError(f"Step {i} missing required field 'name'")
+                if "step_type" not in step:
+                    raise ValueError(f"Step {i} missing required field 'step_type'")
+                # Validate step_type
+                try:
+                    parse_step_type(step.get("step_type", "research"))
+                except ValueError:
+                    step["step_type"] = "research"
 
             plan: list[PlanStep] = []
             for i, step in enumerate(plan_data[:10]):
-                if not isinstance(step, dict):
-                    continue
                 plan.append(PlanStep(
                     step_id=step.get("step_id", f"step_{i+1}"),
                     name=step.get("name", f"Step {i+1}"),
@@ -209,26 +358,41 @@ class OrchestratorNodes:
             state["plan"] = plan
             state["current_step_index"] = 0
             state["started_at"] = datetime.now().isoformat()
+            state["plan_attempts"] = 0  # Reset on success
             logger.info("Planner generated %d steps", len(plan))
 
         except Exception as exc:
-            logger.error("Planner failed: %s. Falling back to single deep research step.", exc)
-            state["plan"] = [
-                PlanStep(
-                    step_id="fallback_step",
-                    name="Deep Research Fallback",
-                    description=f"Direct research on {task}",
-                    step_type=StepType.DEEP_RESEARCH,
-                    status=StepStatus.PENDING,
-                    tool_name="deep_research",
-                    params={},
-                    result=None,
-                    error=None,
-                    started_at=None,
-                    completed_at=None,
-                )
-            ]
-            state["errors"] = state.get("errors", []) + [f"Planner error: {exc}"]
+            logger.error("Planner failed: %s (attempt %d/%d)", 
+                        exc, plan_attempts + 1, max_plan_retries)
+            
+            state["plan_attempts"] = plan_attempts + 1
+            state["errors"] = state.get("errors", []) + [f"Planner attempt {plan_attempts + 1} failed: {exc}"]
+            
+            # STRICT MODE: Only use fallback after max retries
+            if plan_attempts >= max_plan_retries - 1:
+                logger.warning("Max plan retries reached. Using fallback plan.")
+                state["plan"] = [
+                    PlanStep(
+                        step_id="fallback_step",
+                        name="Deep Research",
+                        description=f"Conduct deep research on {task}",
+                        step_type=StepType.DEEP_RESEARCH,
+                        status=StepStatus.PENDING,
+                        tool_name="deep_research",
+                        params={"query": task},
+                        result=None,
+                        error=None,
+                        started_at=None,
+                        completed_at=None,
+                    )
+                ]
+                state["current_step_index"] = 0
+                state["started_at"] = datetime.now().isoformat()
+                state["plan_attempts"] = 0  # Reset after fallback
+                state["errors"] = state.get("errors", []) + ["Used fallback plan after max retries"]
+            # Otherwise, raise to trigger retry in graph
+            else:
+                raise ValueError(f"Plan validation failed: {exc}")
 
         return state
 
@@ -412,24 +576,52 @@ class OrchestratorNodes:
         }
 
     async def dispatcher_parallel(self, state: OrchestratorState) -> OrchestratorState:
-        """Fan-out dispatcher: launch all pending research steps in parallel.
+        """Fan-out dispatcher: launch all independent steps in parallel.
 
-        Uses retry policies with exponential backoff and fallback chains.
+        PARALLEL EXECUTION WITH CONFLICT DETECTION:
+        - Analyzes step dependencies before execution
+        - Groups steps by type for parallel execution
+        - RESEARCH, DEEP_RESEARCH, NEWSLETTER can run in parallel
+        - SYNTHESIS, ANALYSIS, EMAIL run sequentially after research
+        
+        Algorithm:
+        1. Analyze dependencies using group_parallel_steps()
+        2. Execute parallel groups simultaneously
+        3. Handle sequential-only steps separately
         """
         plan = state.get("plan", [])
-        pending_indices = [
-            i for i, step in enumerate(plan)
-            if step.get("status") == StepStatus.PENDING
-            and step.get("step_type") in (StepType.RESEARCH, StepType.DEEP_RESEARCH)
-        ]
-
-        if not pending_indices:
+        
+        if not plan:
+            return state
+        
+        # Analyze dependencies
+        parallel_groups, sequential_indices = group_parallel_steps(plan)
+        
+        # Find all pending parallelizable steps
+        pending_parallel: list[int] = []
+        for group in parallel_groups:
+            for idx in group:
+                if plan[idx].get("status") == StepStatus.PENDING:
+                    pending_parallel.append(idx)
+        
+        pending_sequential = [i for i in sequential_indices 
+                           if plan[i].get("status") == StepStatus.PENDING]
+        
+        if not pending_parallel and not pending_sequential:
             return await self.dispatcher(state)
+        
+        logger.info("Execution plan: %d parallel groups, %d sequential steps",
+                   len(parallel_groups), len(pending_sequential))
 
         async def run_step(step: PlanStep, idx: int) -> tuple[int, dict]:
             tool_name = step.get("tool_name") or "search"
             params = step.get("params", {}) or {}
             step_id = step["step_id"]
+            step_type = step.get("step_type")
+            
+            if step_type == StepType.DEEP_RESEARCH:
+                return await self._execute_with_retry(step, idx, tool_name, params, state)
+            
             return await self._execute_with_retry(step, idx, tool_name, params, state)
 
         try:
@@ -438,6 +630,8 @@ class OrchestratorNodes:
             
             research_results = state.get("research_results", [])
             updated_plan = plan[:]
+            
+            completed_count = 0
 
             for item in results:
                 if isinstance(item, Exception) or not isinstance(item, tuple):
@@ -460,15 +654,25 @@ class OrchestratorNodes:
                         "count": len(result.get("data", [])) if isinstance(result.get("data"), list) else 1,
                         "timestamp": datetime.now().isoformat(),
                     })
+                    completed_count += 1
                 else:
                     updated_plan[idx]["status"] = StepStatus.FAILED
                     updated_plan[idx]["error"] = result.get("error", "Unknown error")
 
             state["plan"] = updated_plan
             state["research_results"] = research_results
-            current_max = max(pending_indices) if pending_indices else state.get("current_step_index", 0)
-            state["current_step_index"] = current_max + 1
-            logger.info("Parallel dispatch completed %d steps", len(pending_indices))
+            
+            # Update current_step_index to first pending sequential step
+            if pending_sequential:
+                state["current_step_index"] = pending_sequential[0]
+            elif pending_parallel:
+                # After all parallel done, move to next phase
+                state["current_step_index"] = max(pending_parallel) + 1 if pending_parallel else 0
+            else:
+                state["current_step_index"] = 0
+                
+            logger.info("Parallel dispatch completed: %d/%d parallel steps done, %d sequential pending",
+                       completed_count, len(pending_parallel), len(pending_sequential))
 
         except Exception as exc:
             logger.error("Parallel dispatcher failed: %s", exc)

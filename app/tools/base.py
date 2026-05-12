@@ -32,6 +32,7 @@ class ToolCategory(Enum):
     DATA = "data"  # Data processing/analysis tools
     UTILITY = "utility"  # General utility tools
     MEMORY = "memory"  # Memory/retrieval tools
+    DELIVERY = "delivery"  # Email/delivery tools
 
 
 @dataclass

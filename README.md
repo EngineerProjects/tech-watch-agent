@@ -27,14 +27,25 @@ All core capabilities are implemented, tested, and functional:
 1. **Import error** (`app/prompts/newsletter` → `app/agents/newsletter/prompts`): Module structure refactored to move prompts under agents
 2. **Orchestrator factory bug**: `create_orchestrator_agent()` had invalid `checkpointer` parameter removed
 
+### New Features (2026-05-12)
+1. **Email as Tool**: `EmailTool` and `EmailPreviewTool` registered in tool registry
+   - `email` tool: Send emails via Gmail API with HTML/text rendering
+   - `email_preview` tool: Preview email content without sending
+2. **Plan Mode Strict**: Planner now retries up to 3 times with strict JSON validation
+   - Cannot exit without a valid plan
+   - Better error messages and fallbacks
+3. **Parallel Newsletter**: NEWSLETTER steps now run in parallel with RESEARCH/DEEP_RESEARCH
+4. **Conflict Detection**: New dependency analysis for step execution
+   - `group_parallel_steps()`: Groups steps by parallelization potential
+   - `analyze_step_dependencies()`: Maps dependencies between steps
+   - Sequential-only types: SYNTHESIS, ANALYSIS, EMAIL, VALIDATION, COLLECTION, SUMMARY
+
 ### Known Issues
 - LLM network errors with Z.ai provider (glm-4.5-flash) - recommend using OpenRouter or Ollama for production
-- Planner JSON parsing fallback to default plan when LLM returns non-JSON response
 
 ### Recommendations
-- Add type hints validation in planner node
-- Consider adding retry logic for LLM calls
 - Add health checks for LLM provider connectivity
+- Consider adding more retry policies for tool failures
 
 ## What's New (2026-05-12)
 
