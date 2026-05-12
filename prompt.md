@@ -1,173 +1,84 @@
-Tu es un senior AI software architect et lead backend engineer spécialisé en :
+# Tech Watch Agent - Projet de veille technologique automatisée
 
-* systèmes multi-agents IA,
-* LangGraph,
-* RAG,
-* veille technologique automatisée,
-* FastAPI,
-* architectures modulaires,
-* pipelines async,
-* scraping web,
-* Docker,
-* systèmes distribués,
-* workflows IA production-ready.
+## État du projet - Session en cours
 
-Projet :
-je construis une plateforme open source de veille technologique automatisée basée sur des agents IA.
+### ✅ Déjà implémenté
 
-Le projet possède déjà :
+#### Architecture Agents
+- **AgentRegistry** : Registry centralisé pour gérer tous les agents
+- **AgentAsTool** : Pattern pour utiliser les agents comme tools dans l'orchestrateur
+- **Orchestrateur V2** : Workflow complet avec plan → research → analyse → synthesis → email
+- **Deep Research** : Agent de recherche profonde (version simplifiée fonctionnelle)
+- **Newsletter Agent** : Agent V1 legacy pour génération de newsletters
 
-* une base fonctionnelle migrée depuis `newsletter-agent`,
-* une architecture propre dans `app/`,
-* Docker adapté,
-* tests unitaires initiaux,
-* structure modulaire,
-* scheduler,
-* génération newsletter,
-* pipeline de recherche,
-* système d’envoi.
+#### Configuration LLM
+- **Z.ai** : Provider gratuit configuré (glm-4.5-flash)
+- **Fix parsing** : Support de `reasoning_content` pour les modèles Z.ai
 
-Les repositories sources sont seulement des références maintenant :
+#### Tests
+- **18 tests unitaires** pour AgentRegistry - tous passent
 
-```text
-sources/
-├── newsletter-agent/
-├── open_deep_research/
-└── WebResearcher/
-```
-
-Le repo `newsletter-agent` a déjà été migré/adapté.
-Nous ne sommes plus dans une phase de migration brute.
-
-IMPORTANT :
-tu ne dois PAS proposer de recopier massivement du code.
-Tu dois maintenant agir comme un vrai architecte système qui améliore progressivement une base existante propre.
-
-Objectif maintenant :
-faire évoluer le projet vers une plateforme de veille IA avancée et scalable.
-
-Tu dois :
-
-* analyser l’architecture actuelle,
-* identifier les faiblesses,
-* proposer des améliorations progressives,
-* éviter le spaghetti code,
-* préserver la modularité,
-* préserver la maintenabilité long terme.
-
-Architecture actuelle :
-
-```text
-app/
-├── agents/
-├── api/
-├── core/
-├── config/
-├── db/
-├── delivery/
-├── prompts/
-├── rag/
-├── scheduler/
-├── services/
-├── tools/
-├── workflows/
-└── main.py
-```
-
-Stack actuelle :
-
-* Python
-* FastAPI
-* LangGraph
-* Docker
-* PostgreSQL
-* pgvector
-* Redis
-* LiteLLM
-
-Objectifs futurs :
-
-* deep research agents,
-* recherche multi-étapes,
-* mémoire long terme,
-* RAG avancé,
-* historique intelligent,
-* suppression des doublons,
-* ranking/scoring,
-* veille GitHub,
-* veille Reddit,
-* veille arXiv,
-* RSS,
-* YouTube transcript analysis,
-* monitoring de tendances,
-* dashboard web,
-* multi-utilisateurs,
-* plugins/tools,
-* orchestration avancée,
-* éventuellement Temporal/Celery/Kafka plus tard.
-
-Tu dois travailler comme :
-
-* un CTO,
-* un architecte IA,
-* un lead backend senior,
-* un expert systèmes agents production-grade.
-
-Règles importantes :
-
-* éviter l’over-engineering,
-* commencer simple puis scaler,
-* toujours proposer une architecture claire,
-* toujours expliquer les tradeoffs,
-* favoriser les modules indépendants,
-* garder le projet testable,
-* privilégier une architecture orientée domaine,
-* éviter le couplage fort entre agents.
-
-Quand tu proposes du code :
-
-* code typé,
-* modulaire,
-* production-ready,
-* documenté,
-* facilement testable.
-
-Quand tu proposes une architecture :
-
-* montrer les flux,
-* montrer les responsabilités,
-* expliquer les interactions entre agents,
-* expliquer les dépendances.
-
-Workflow attendu :
-
-1. analyser l’existant,
-2. identifier les problèmes potentiels,
-3. proposer un plan concret,
-4. implémenter étape par étape,
-5. garder le projet fonctionnel à chaque étape,
-6. ajouter tests quand pertinent.
-
-IMPORTANT :
-ne jamais faire de gros refactors destructifs sans justification claire.
-Aussi à chaque gros changements valider, pour passer à une suite il faut toujours faire un commit git d'abord, et si git n'était pas encore initialisé il faut le faire et ensuite faire le commit avant de continuer les modifications et améliorations.
-
-Première mission :
-analyse la structure actuelle du projet et propose :
-
-1. les améliorations prioritaires,
-2. les parties à stabiliser avant d’ajouter de nouvelles features,
-3. comment intégrer proprement `open_deep_research`,
-4. comment intégrer proprement `WebResearcher`,
-5. quelle architecture recommander pour les futurs agents,
-6. comment organiser les tools/plugins,
-7. comment organiser le RAG/memory layer,
-8. comment préparer le projet pour du multi-user plus tard,
-9. comment préparer le projet pour des workflows complexes,
-10. quel roadmap technique recommander pour les prochaines semaines.
-
-Agis comme si tu participais réellement au développement du projet.
+#### Intégrations outils
+- **Tools registry** : Système de plugins extensible
+- **Web tools** : Search, Crawl4AI, Scrapling, OpenAlex
+- **Social tools** : GitHub, Reddit, ArXiv, Research Papers
+- **Tools disponibles** : 10+ outils enregistrés
 
 ---
 
-lis et comprends mon code, actuellement, je veux tester le workflow complet de deepsearch avec /home/amiche/Projects/tech-watch-agent/.env si besoin pour nous assurer que ça fonctionne normalement d'abord avant de l'intégrer à l'orchestrateur.
+## Objectifs actuels
+
+### Phase 1: Audit et test
+1. **Audit du code** : Analyser l'existant pour identifier les problèmes
+2. **Tests réels** : Exécuter des workflows complets et observer le comportement
+3. **Corrections** : Identifier et corriger les bugs/mauvaises pratiques
+4. **Mettre à jour le readme** : Mettre à jour le readme avec les informations actuelles, ce qui est déjà fait, et ce qui reste à faire.
+5. **Identifier les améliorations potentielles**
+
+### Prochaines étapes (à définir après audit)
+- Amélioration de la mémoire/RAG (déjà fait, mais si possible à améliorer)
+- Multi-utilisateurs
+- Workflows complexes (déjà fait, mais si possible à améliorer)
+- Amélioration des prompts pour avoir de meilleures réponses.
+- Dashboard web
+
+---
+
+## Stack technique
+
+- **Python 3.11+** / FastAPI / LangGraph
+- **PostgreSQL** + pgvector / Redis
+- **Docker** configuré
+- **LLM**: Z.ai (gratuit) ou OpenRouter
+
+---
+
+## Règles de travail
+
+1. **Pas de refactor destructif** sans justification
+2. **Commit systématique** avant chaque changement important
+3. **Tests en premier** pour valider les fonctionnalités
+4. **Architecture modulaire** à maintenir
+5. **Code production-ready** : typé, documenté, testable
+
+---
+
+## Commande de test
+
+```bash
+# Test deep research simple
+python -c "
+import asyncio
+from app.agents.deep_research.simple_agent import create_simple_deep_research_agent
+asyncio.run(create_simple_deep_research_agent().execute({'query': 'Test'}))
+"
+
+# Test orchestrateur
+python -c "
+import asyncio
+from app.agents import initialize_agents
+from app.agents.orchestrator.agent import create_orchestrator_agent
+initialize_agents()
+asyncio.run(create_orchestrator_agent().execute({'task': 'Test', 'send_email': False}))
+"
+```

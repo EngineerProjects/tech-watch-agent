@@ -7,6 +7,10 @@ execution modes. The orchestrator is the central coordinator for all tasks.
 
 V2 mode: Full orchestrator agent with plan -> parallel research -> analysis -> synthesis -> email
 V1 mode: Legacy newsletter workflow (backwards compatible)
+
+Modes:
+- Autonomous (default for scheduler): Fully automated, no human approval
+- Interactive (default for API): Human-in-the-loop for approval/revision
 """
 
 from __future__ import annotations
@@ -86,6 +90,43 @@ class RuntimeStatus:
     mode: str = "v2"
 
 
+def create_autonomous_config(settings: Settings) -> OrchestratorConfig:
+    """Create config for fully autonomous execution (scheduler mode).
+
+    Autonomous mode:
+    - No human approval required
+    - Automatic retry with quality-based routing
+    - Checkpointing enabled for resume capability
+    """
+    return OrchestratorConfig(
+        autonomous=True,
+        human_approval_enabled=False,
+        send_email=True,
+        enable_checkpointing=True,
+        checkpoint_backend="memory",
+        max_iterations=5,
+    )
+
+
+def create_interactive_config(settings: Settings) -> OrchestratorConfig:
+    """Create config for interactive/chat mode (API mode).
+
+    Interactive mode:
+    - Human approval required for final output
+    - Quality threshold determines auto-approval
+    - Checkpointing for session persistence
+    """
+    return OrchestratorConfig(
+        autonomous=False,
+        human_approval_enabled=True,
+        send_email=True,
+        enable_checkpointing=True,
+        checkpoint_backend="memory",
+        approval_threshold=0.7,
+        max_iterations=3,
+    )
+
+
 class OrchestratorScheduler:
     """Unified orchestrator scheduler supporting V1 (newsletter) and V2 (research) modes.
 
@@ -119,10 +160,22 @@ class OrchestratorScheduler:
         self._gmail_client = gmail_client or GmailDeliveryClient(self.settings)
         self.is_running = False
 
-    async def setup(self) -> None:
-        """Lazily initialize agents."""
+    async def setup(self, autonomous: bool = True) -> None:
+        """Lazily initialize agents.
+
+        Args:
+            autonomous: If True (default for scheduler), use fully autonomous mode.
+                       If False, use interactive mode with human approval.
+        """
         if self.mode == "v2" and self._orchestrator is None:
-            self._orchestrator = create_orchestrator_agent(settings=self.settings)
+            if autonomous:
+                config = create_autonomous_config(self.settings)
+                logger.info("Using AUTONOMOUS mode for scheduler")
+            else:
+                config = create_interactive_config(self.settings)
+                logger.info("Using INTERACTIVE mode with human approval")
+
+            self._orchestrator = OrchestratorAgent(config=config, settings=self.settings)
             await self._orchestrator.setup()
             logger.info("OrchestratorAgent initialized (V2 mode)")
         elif self.mode == "v1" and self._newsletter_workflow is None:
@@ -134,13 +187,21 @@ class OrchestratorScheduler:
         task: Optional[str] = None,
         topics: Optional[list[str]] = None,
         send_email: bool = True,
+        autonomous: bool = True,
     ) -> dict:
         """Run a research task through the orchestrator.
 
         V2: Uses OrchestratorAgent with plan-based parallel research.
         V1: Uses legacy newsletter workflow.
+
+        Args:
+            task: The research task description
+            topics: Optional list of topics to focus on
+            send_email: Whether to send email after completion
+            autonomous: If True, runs fully automated (no human approval).
+                      If False, requires human approval before sending email.
         """
-        await self.setup()
+        await self.setup(autonomous=autonomous)
         start = datetime.now()
 
         self.runtime.state = "running"

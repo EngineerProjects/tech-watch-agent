@@ -40,8 +40,17 @@ class ChatCompletionClient:
         self.default_model = self.settings.llm_model or self._provider_config.default_model
         self.default_temperature = self.settings.llm_temperature
         self.default_max_tokens = self.settings.llm_max_tokens
-        self._api_key = self.settings.llm_api_key
+        
+        # Use provider-specific API key if available
+        if self._provider_name == LLMProviders.ZAI and self.settings.zai_api_key:
+            self._api_key = self.settings.zai_api_key
+        else:
+            self._api_key = self.settings.llm_api_key
+            
         self._http_client = http_client
+        # Fallback model chain for when the primary model is rate-limited.
+        # Models are tried left-to-right before giving up entirely.
+        self._fallback_models: list[str] = list(self.settings.llm_fallback_models)
 
         if self._provider_config.requires_api_key and not self._api_key:
             raise ValueError(f"LLM provider '{self._provider_name}' requires API key")
@@ -54,6 +63,152 @@ class ChatCompletionClient:
     def available_models(self) -> list[str]:
         return list_providers()
 
+    async def async_generate_completion(
+        self,
+        prompt: str,
+        system_message: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra_headers: dict[str, str] | None = None,
+        max_retries: int = 5,
+        initial_delay: float = 2.0,
+        response_model: type[BaseModel] | None = None,
+    ) -> Any:
+        """Generate a completion with exponential backoff + model fallback chain.
+        
+        Args:
+            ...
+            response_model: Optional Pydantic model for structured output
+        """
+        import asyncio
+
+        # Build the ordered list of models to try: primary → fallbacks
+        models_to_try = [model or self.default_model] + self._fallback_models
+
+        for model_candidate in models_to_try:
+            for attempt in range(max_retries):
+                try:
+                    result = await self._async_make_request(
+                        prompt=prompt,
+                        system_message=system_message,
+                        model=model_candidate,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        extra_headers=extra_headers,
+                        response_model=response_model,
+                    )
+                    if model_candidate != (model or self.default_model):
+                        logger.info("Succeeded with fallback model: %s", model_candidate)
+                    return result
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 429:
+                        delay = initial_delay * (2 ** attempt)
+                        logger.warning(
+                            "[%s] Rate limited (attempt %d/%d). Retrying in %.1fs...",
+                            model_candidate, attempt + 1, max_retries, delay,
+                        )
+                        await asyncio.sleep(delay)
+                    elif exc.response.status_code >= 500:
+                        delay = initial_delay * (2 ** attempt)
+                        logger.warning(
+                            "[%s] Server error %d (attempt %d/%d). Retrying in %.1fs...",
+                            model_candidate, exc.response.status_code,
+                            attempt + 1, max_retries, delay,
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error("[%s] LLM client error (no retry): %s", model_candidate, exc)
+                        return None if response_model else ""
+                except httpx.HTTPError as exc:
+                    logger.error("[%s] LLM network error: %s", model_candidate, exc)
+                    return None if response_model else ""
+
+            logger.warning(
+                "[%s] All %d retries exhausted. Trying next fallback model...",
+                model_candidate, max_retries,
+            )
+
+        logger.error(
+            "All models exhausted. Primary: %s, Fallbacks: %s",
+            model or self.default_model,
+            self._fallback_models,
+        )
+        return None if response_model else ""
+
+    async def _async_make_request(
+        self,
+        prompt: str,
+        system_message: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra_headers: dict[str, str] | None = None,
+        response_model: type[BaseModel] | None = None,
+    ) -> Any:
+        payload = {
+            "model": model or self.default_model,
+            "messages": self._build_messages(prompt, system_message),
+            "temperature": temperature
+            if temperature is not None
+            else self.default_temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
+        }
+
+        # Handle structured output for providers that support it (OpenRouter, OpenAI)
+        if response_model and self._provider_name in [LLMProviders.OPENROUTER, LLMProviders.OPENAI]:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_model.__name__,
+                    "strict": True,
+                    "schema": response_model.model_json_schema(),
+                }
+            }
+        elif response_model:
+            # For Ollama/others, we append format instruction to prompt
+            schema_json = response_model.model_json_schema()
+            payload["messages"][-1]["content"] += f"\n\nReturn ONLY a JSON object matching this schema: {schema_json}"
+            # Some providers like Ollama support a simple "json" format
+            if self._provider_name == LLMProviders.OLLAMA:
+                payload["format"] = "json"
+
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self._provider_config.auth_type.value == "bearer":
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        elif self._provider_config.auth_type.value == "api_key":
+            headers["X-API-Key"] = self._api_key
+        if extra_headers:
+            headers.update(extra_headers)
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        content = self._extract_content(data)
+        
+        if response_model:
+            import json
+            try:
+                # Clean content if it contains markdown code blocks
+                if content.startswith("```"):
+                    content = content.split("```")[1]
+                    if content.startswith("json"):
+                        content = content[4:]
+                return response_model.model_validate_json(content)
+            except Exception as exc:
+                logger.error("Failed to parse structured output: %s. Content: %s", exc, content)
+                raise ValueError(f"Invalid structured output: {exc}")
+
+        return content
+
     def generate_completion(
         self,
         prompt: str,
@@ -62,8 +217,8 @@ class ChatCompletionClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         extra_headers: dict[str, str] | None = None,
-        max_retries: int = 3,
-        initial_delay: float = 1.0,
+        max_retries: int = 5,
+        initial_delay: float = 2.0,
     ) -> str:
         import time
 
@@ -169,7 +324,12 @@ class ChatCompletionClient:
             return ""
 
         message = choices[0].get("message", {})
+        
+        # Handle Z.ai and other providers that use reasoning_content
         content = message.get("content", "")
+        if not content:
+            content = message.get("reasoning_content", "")
+            
         return content.strip() if isinstance(content, str) else ""
 
     def health_check(self) -> bool:

@@ -57,8 +57,6 @@ class ArticleService:
 
     @staticmethod
     def _dedupe_articles(articles: list[Article]) -> list[Article]:
-        # Title + URL is enough for a V1 dedupe key and avoids collapsing
-        # syndicated stories that share titles but link to different sources.
         seen: set[tuple[str, str]] = set()
         deduped: list[Article] = []
 
@@ -70,3 +68,60 @@ class ArticleService:
             deduped.append(article)
 
         return deduped
+
+    async def save_articles(self, articles: list[dict]) -> int:
+        """Save articles to database with deduplication.
+
+        Args:
+            articles: List of article dicts with keys: title, summary, url,
+                      topic, source, published_date, content
+
+        Returns:
+            Number of articles saved
+        """
+        from app.db.base import get_db_context
+        from app.db.models import Article
+        import uuid
+
+        if not articles:
+            return 0
+
+        saved = 0
+        async with get_db_context() as db:
+            for article_data in articles:
+                title = article_data.get("title", "").strip()
+                url = article_data.get("url", "").strip()
+
+                if not title or not url:
+                    continue
+
+                existing = await db.execute(
+                    select(Article).where(
+                        Article.title.ilike(title),
+                        Article.url.ilike(url),
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    continue
+
+                article = Article(
+                    id=uuid.uuid4(),
+                    title=title,
+                    summary=article_data.get("summary", ""),
+                    content=article_data.get("content", ""),
+                    url=url,
+                    source=article_data.get("source", "orchestrator"),
+                    topic=article_data.get("topic", ""),
+                    published_date=article_data.get("published_date"),
+                    relevance_score=article_data.get("relevance_score", 0),
+                    meta_data={
+                        "tool": article_data.get("source", "unknown"),
+                        "step": article_data.get("step_name", ""),
+                    },
+                )
+                db.add(article)
+                saved += 1
+
+            await db.commit()
+            logger.info("Saved %d articles to database", saved)
+            return saved

@@ -80,8 +80,8 @@ def _init_providers() -> None:
     ))
     _register_provider(LLMProviderConfig(
         name=LLMProviders.ZAI,
-        base_url="https://api.z.ai/v1",
-        default_model="zephyr",
+        base_url="https://api.z.ai/api/paas/v4",
+        default_model="glm-4.7-flash",
         auth_type=AuthType.BEARER,
         requires_api_key=True,
     ))

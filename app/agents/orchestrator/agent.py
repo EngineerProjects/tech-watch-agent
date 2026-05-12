@@ -3,6 +3,13 @@ Orchestrator agent implementation.
 
 This is the main orchestrator agent that coordinates all other agents
 and tools to complete research tasks end-to-end.
+
+Features:
+- LangGraph StateGraph workflow with conditional routing
+- Checkpointing support (memory + PostgreSQL)
+- Retry policies with exponential backoff
+- Fallback chains for tool failures
+- Human-in-the-loop approval checkpoints (optional)
 """
 
 from __future__ import annotations
@@ -13,7 +20,8 @@ from dataclasses import dataclass, field
 
 from app.agents.base.base_agent import BaseAgent, AgentConfig, AgentResult
 from app.agents.orchestrator.config import OrchestratorConfig
-from app.agents.orchestrator.graph import OrchestratorWorkflow, create_orchestrator_workflow
+from app.agents.orchestrator.graph import OrchestratorGraphBuilder
+from app.agents.orchestrator.state import OrchestratorState
 from app.agents.orchestrator.nodes import OrchestratorNodes
 from app.config.settings import Settings, get_settings
 from app.core.logging import get_logger
@@ -37,33 +45,27 @@ class OrchestratorAgent(BaseAgent):
     Uses LangGraph StateGraph with supervisor pattern.
     Falls back to legacy NewsletterOrchestrator for V1 compatibility.
 
-    Attributes:
-        workflow: The compiled LangGraph workflow
-        nodes: The orchestrator nodes
-        max_articles: Max articles per research step
-        send_email: Whether to send email after completion
+    Features:
+        - Checkpointing for state persistence (memory/postgres)
+        - Retry policies with exponential backoff
+        - Fallback chains for tool failures
+        - Human-in-the-loop approval checkpoints (optional)
     """
 
     def __init__(
         self,
         config: Optional[OrchestratorConfig] = None,
         settings: Optional[Settings] = None,
-        workflow: Optional[OrchestratorWorkflow] = None,
         nodes: Optional[OrchestratorNodes] = None,
-        checkpointer=None,
     ) -> None:
         if config is None:
             config = OrchestratorConfig()
 
         super().__init__(config=config, settings=settings)
 
-        self._workflow = workflow
         self._nodes = nodes
-        self._checkpointer = checkpointer
-
-    @property
-    def config(self) -> OrchestratorConfig:
-        return self._config
+        self._graph = None
+        self._config = config
 
     @property
     def name(self) -> str:
@@ -80,21 +82,29 @@ class OrchestratorAgent(BaseAgent):
         if self._nodes is None:
             self._nodes = OrchestratorNodes(max_articles=5, min_sources=2)
 
-        if self._workflow is None:
-            self._workflow = create_orchestrator_workflow(
-                nodes=self._nodes,
-                checkpointer=self._checkpointer,
-            )
+        graph_builder = OrchestratorGraphBuilder(
+            nodes=self._nodes,
+            enable_checkpointing=self._config.enable_checkpointing,
+            checkpoint_backend=self._config.checkpoint_backend,
+        )
+        self._graph = graph_builder.build()
 
         logger.info("Orchestrator agent setup complete")
 
-    async def execute(self, input_data: Any) -> AgentResult:
+    async def execute(
+        self,
+        input_data: Any,
+        session_id: Optional[str] = None,
+        memory_context: Optional[dict[str, Any]] = None,
+    ) -> AgentResult:
         """Execute the orchestrator pipeline.
 
         Args:
             input_data: Can be:
                 - str: The research task
                 - dict: {"task": str, "topics": list[str], "send_email": bool}
+            session_id: Optional session ID for memory tracking
+            memory_context: Optional pre-loaded memory context for RAG
 
         Returns:
             AgentResult with final_report, email_sent status, and metadata
@@ -109,6 +119,10 @@ class OrchestratorAgent(BaseAgent):
             task = input_data.get("task", str(input_data))
             topics = input_data.get("topics")
             send_email = input_data.get("send_email", True)
+            if session_id is None:
+                session_id = input_data.get("session_id")
+            if memory_context is None:
+                memory_context = input_data.get("memory_context")
         else:
             task = str(input_data)
             topics = None
@@ -116,10 +130,49 @@ class OrchestratorAgent(BaseAgent):
 
         logger.info("Orchestrator starting task: %s", task[:100])
 
+        memory_info = ""
+        if memory_context:
+            recent = memory_context.get("recent_articles", [])
+            if recent:
+                memory_info = f"\n\nContext from memory ({len(recent)} recent articles):\n"
+                memory_info += "\n".join([
+                    f"- {a.get('title', 'Unknown')}: {a.get('summary', '')[:100]}..."
+                    for a in recent[:3]
+                ])
+
+        if memory_info and topics:
+            task = task + memory_info
+
         try:
             await self.setup()
 
-            result_state = self._workflow.run(task=task, topics=topics)
+            result_state = await self._graph.ainvoke({
+                "task": task,
+                "task_id": f"orch_{datetime.now().timestamp()}",
+                "topics": topics or [],
+                "send_email": send_email,
+                "plan": [],
+                "current_step_index": 0,
+                "articles": [],
+                "research_results": [],
+                "analysis_results": "",
+                "synthesis_result": "",
+                "final_report": "",
+                "email_sent": False,
+                "email_result": None,
+                "validation_errors": [],
+                "quality_score": 0.0,
+                "iteration_count": 0,
+                "max_iterations": self._config.max_iterations,
+                "approval_status": "",
+                "approval_result": "",
+                "approved_at": None,
+                "errors": [],
+                "started_at": None,
+                "completed_at": None,
+                "approval_threshold": self._config.approval_threshold,
+                "autonomous": self._config.autonomous,
+            })
 
             execution_time = (datetime.now() - start_time).total_seconds()
 
@@ -183,7 +236,6 @@ class OrchestratorAgent(BaseAgent):
 def create_orchestrator_agent(
     config: Optional[OrchestratorConfig] = None,
     settings: Optional[Settings] = None,
-    checkpointer=None,
 ) -> OrchestratorAgent:
     """Factory function to create an orchestrator agent."""
-    return OrchestratorAgent(config=config, settings=settings, checkpointer=checkpointer)
+    return OrchestratorAgent(config=config, settings=settings)

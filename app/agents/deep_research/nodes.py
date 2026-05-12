@@ -25,6 +25,7 @@ from langchain_core.messages import (
     get_buffer_string,
 )
 
+from pydantic import BaseModel, Field
 from app.agents.deep_research.config import DeepResearchConfig
 from app.agents.deep_research.state import (
     DeepResearchAgentState,
@@ -50,6 +51,12 @@ from app.core.logging import get_logger
 
 
 logger = get_logger(__name__)
+
+
+class Summary(BaseModel):
+    """Structured summary of a webpage."""
+    summary: str = Field(description="Comprehensive summary of the webpage content")
+    key_excerpts: str = Field(description="Key quotes or data points found on the page")
 
 
 class DeepResearchNodes:
@@ -80,6 +87,12 @@ class DeepResearchNodes:
         self._think_tool = None
         self._content_extractor = None
         self._web_search_tool = None
+        self._scholar_tool = None
+        self._research_paper_tool = None
+        self._github_tool = None
+        self._arxiv_tool = None
+        self._openalex_tool = None
+        self._pdf_downloader = None
 
     @property
     def llm_client(self):
@@ -117,18 +130,53 @@ class DeepResearchNodes:
             self._web_search_tool = NewsSearchService()
         return self._web_search_tool
 
+    def _get_scholar_tool(self) -> Any:
+        """Lazy load Google Scholar tool."""
+        if self._scholar_tool is None:
+            from app.tools.web.scholar import GoogleScholarTool
+            self._scholar_tool = GoogleScholarTool()
+        return self._scholar_tool
+
+    def _get_research_paper_tool(self) -> Any:
+        """Lazy load research paper tool."""
+        if self._research_paper_tool is None:
+            from app.tools.social.research_paper import ResearchPaperTool
+            self._research_paper_tool = ResearchPaperTool()
+        return self._research_paper_tool
+
+    def _get_github_tool(self) -> Any:
+        """Lazy load GitHub tool."""
+        if self._github_tool is None:
+            from app.tools.social.github import GitHubTool
+            self._github_tool = GitHubTool()
+        return self._github_tool
+
+    def _get_arxiv_tool(self) -> Any:
+        """Lazy load ArXiv tool."""
+        if self._arxiv_tool is None:
+            from app.tools.social.arxiv import ArXivTool
+            self._arxiv_tool = ArXivTool()
+        return self._arxiv_tool
+
+    def _get_openalex_tool(self) -> Any:
+        """Lazy load OpenAlex tool."""
+        if self._openalex_tool is None:
+            from app.tools.web.openalex import OpenAlexTool
+            self._openalex_tool = OpenAlexTool()
+        return self._openalex_tool
+
+    def _get_pdf_downloader(self) -> Any:
+        """Lazy load PDF downloader tool."""
+        if self._pdf_downloader is None:
+            from app.tools.web.pdf_downloader import PDFDownloaderTool, ArXivPDFTool
+            self._pdf_downloader = PDFDownloaderTool()
+            self._arxiv_pdf_tool = ArXivPDFTool()
+        return self._pdf_downloader
+
     async def _search_with_fallback(self, query: str) -> dict[str, Any]:
         """Execute search with multi-tool fallback chain.
 
-        Tries tools in order:
-        1. Tavily (best quality, requires API key)
-        2. Web search (DuckDuckGo, free fallback)
-
-        Args:
-            query: Search query
-
-        Returns:
-            Search results dict with 'results' and 'answer' keys
+        For academic results (ArXiv, OpenAlex), also extracts full PDF content.
         """
         # Try Tavily first
         tavily = self._get_tavily_tool()
@@ -139,6 +187,87 @@ class DeepResearchNodes:
                     return result.get("data", {})
             except Exception as exc:
                 logger.debug("Tavily search failed: %s", exc)
+
+        # Try Google Scholar for potentially academic topics
+        scholar = self._get_scholar_tool()
+        if scholar._api_key:
+            try:
+                result = await scholar.execute({"query": query, "limit": 5})
+                if result.get("success"):
+                    return result.get("data", {})
+            except Exception as exc:
+                logger.debug("Scholar search failed: %s", exc)
+        else:
+            # Fallback to OpenAlex (Free & Open Source)
+            openalex = self._get_openalex_tool()
+            try:
+                result = await openalex.execute({"query": query, "limit": 5})
+                if result.get("success"):
+                    data = result.get("data", {})
+                    papers = data.get("results", [])
+                    # Extract PDF content for each paper
+                    for paper in papers:
+                        pdf_url = paper.get("pdf_url")
+                        if pdf_url:
+                            pdf_text = await self._extract_pdf_content(pdf_url)
+                            if pdf_text:
+                                paper["content"] = pdf_text[:8000]
+                    formatted_results = [
+                        {
+                            "title": p.get("title"),
+                            "url": p.get("url"),
+                            "content": p.get("content", f"Authors: {', '.join(p.get('authors', []))}. Year: {p.get('year')}. Cited by: {p.get('cited_by')}"),
+                        }
+                        for p in papers
+                    ]
+                    return {"results": formatted_results}
+            except Exception as exc:
+                logger.debug("OpenAlex search failed: %s", exc)
+
+        # Try ArXiv for academic preprints
+        arxiv = self._get_arxiv_tool()
+        try:
+            result = await arxiv.execute({"action": "search", "query": query, "limit": 5})
+            if result.get("success"):
+                papers = result.get("data", [])
+                # For ArXiv, download and extract PDF text for top results
+                for paper in papers:
+                    paper_url = paper.get("url", "")
+                    if "arxiv.org/abs/" in paper_url or paper_url.startswith("http"):
+                        pdf_url = self._arxiv_to_pdf_url(paper_url)
+                        if pdf_url:
+                            pdf_text = await self._extract_pdf_content(pdf_url)
+                            if pdf_text:
+                                paper["content"] = pdf_text[:8000]
+                            else:
+                                paper["content"] = paper.get("abstract", "")
+                        else:
+                            paper["content"] = paper.get("abstract", "")
+                    else:
+                        paper["content"] = paper.get("abstract", "")
+
+                formatted_results = [
+                    {"title": p.get("title"), "url": p.get("url"), "content": p.get("content")}
+                    for p in papers
+                ]
+                return {"results": formatted_results}
+        except Exception as exc:
+            logger.debug("ArXiv search failed: %s", exc)
+
+        # Try GitHub for technical/code queries
+        if any(term in query.lower() for term in ["repo", "github", "code", "library", "framework", "implementation"]):
+            github = self._get_github_tool()
+            try:
+                result = await github.execute({"action": "search_repos", "query": query, "limit": 5})
+                if result.get("success"):
+                    repos = result.get("data", [])
+                    formatted_results = [
+                        {"title": f"GitHub: {r.get('name')}", "url": r.get("url"), "content": r.get("description")}
+                        for r in repos
+                    ]
+                    return {"results": formatted_results}
+            except Exception as exc:
+                logger.debug("GitHub search failed: %s", exc)
 
         # Fallback to web search
         web_search = self._get_web_search_tool()
@@ -152,6 +281,14 @@ class DeepResearchNodes:
             logger.debug("Web search failed: %s", exc)
 
         return {"results": [], "answer": ""}
+
+    @staticmethod
+    def _arxiv_to_pdf_url(url: str) -> str:
+        """Convert ArXiv abstract URL to PDF URL."""
+        match = re.search(r"arxiv\.org/abs/([0-9.]+(?:v\d+)?)", url)
+        if match:
+            return f"https://arxiv.org/pdf/{match.group(1)}.pdf"
+        return ""
 
     async def _extract_content_parallel(self, urls: list[dict]) -> list[dict]:
         """Extract content from multiple URLs in parallel.
@@ -195,7 +332,14 @@ class DeepResearchNodes:
         return [r for r in results if isinstance(r, dict) and r.get("content")]
 
     async def _extract_content(self, url: str) -> Optional[str]:
-        """Extract clean content from a URL using content_extractor with fallback."""
+        """Extract clean content from a URL using content_extractor, PDF downloader, or research_paper tool."""
+        if not url:
+            return None
+
+        # If it's a PDF, use the PDF downloader tool
+        if url.lower().endswith(".pdf") or "arxiv.org/pdf" in url.lower():
+            return await self._extract_pdf_content(url)
+
         try:
             extractor = self._get_content_extractor()
             result = await extractor.execute({
@@ -209,13 +353,125 @@ class DeepResearchNodes:
             logger.warning("Content extraction failed for %s: %s", url, exc)
         return None
 
-    def _generate_completion(
+    async def _extract_pdf_content(self, url: str) -> Optional[str]:
+        """Extract text content from a PDF URL.
+
+        Uses the PDF downloader tool to download and parse the PDF,
+        extracting text for research analysis.
+
+        Args:
+            url: PDF URL (ArXiv, direct PDF, etc.)
+
+        Returns:
+            Extracted text content or None on failure
+        """
+        try:
+            pdf_tool = self._get_pdf_downloader()
+            result = await pdf_tool.execute({
+                "url": url,
+                "max_pages": 30,
+                "extract_metadata": True,
+                "source": self._detect_pdf_source(url),
+            })
+
+            if result.get("success"):
+                data = result.get("data", {})
+                text = data.get("text", "")
+                metadata = {
+                    "title": data.get("title", ""),
+                    "author": data.get("author", ""),
+                    "total_pages": data.get("total_pages", 0),
+                    "pages_extracted": data.get("pages_extracted", 0),
+                    "arxiv_id": data.get("arxiv_id", ""),
+                }
+
+                header = f"[PDF Document] {metadata.get('title', url)}\n"
+                if metadata.get("author"):
+                    header += f"Author: {metadata['author']}\n"
+                if metadata.get("total_pages"):
+                    header += f"Pages: {metadata['pages_extracted']}/{metadata['total_pages']}\n"
+                header += f"Source: {url}\n\n"
+
+                sections = self._extract_pdf_sections(text)
+                if sections:
+                    header += f"Sections: {', '.join(sections.keys())}\n\n"
+                    for section_name, section_text in sections.items():
+                        header += f"--- {section_name.upper()} ---\n{section_text[:500]}\n\n"
+
+                return header + f"[Content]\n{text[:10000]}"
+
+            logger.warning("PDF extraction failed for %s: %s", url, result.get("error"))
+        except Exception as exc:
+            logger.warning("PDF extraction error for %s: %s", url, exc)
+        return None
+
+    @staticmethod
+    def _detect_pdf_source(url: str) -> str:
+        """Detect the source of a PDF URL."""
+        if "arxiv.org" in url:
+            return "arxiv"
+        elif "semantic" in url:
+            return "semantic_scholar"
+        elif "openalex" in url:
+            return "openalex"
+        return "direct"
+
+    @staticmethod
+    def _extract_pdf_sections(text: str) -> dict[str, str]:
+        """Extract key sections from PDF text.
+
+        Args:
+            text: Full PDF text
+
+        Returns:
+            Dict of section_name -> section_text (first 500 chars)
+        """
+        sections = {}
+        patterns = [
+            (r"(?i)\bAbstract\b", "abstract"),
+            (r"(?i)^\s*1\.?\s*Introduction\b", "introduction"),
+            (r"(?i)^\s*2\.?\s*Background\b", "background"),
+            (r"(?i)^\s*3\.?\s*Related Work\b", "related_work"),
+            (r"(?i)^\s*4\.?\s*Method\b", "methodology"),
+            (r"(?i)^\s*5\.?\s*Experiment", "experiments"),
+            (r"(?i)^\s*6\.?\s*Results?\b", "results"),
+            (r"(?i)^\s*7\.?\s*Discussion\b", "discussion"),
+            (r"(?i)^\s*8\.?\s*Conclusion\b", "conclusion"),
+        ]
+
+        text_lines = text.split("\n")
+        for pattern, section_name in patterns:
+            for i, line in enumerate(text_lines):
+                if re.search(pattern, line):
+                    section_text = " ".join(text_lines[i : i + 10])
+                    sections[section_name] = section_text[:500]
+                    break
+
+        return sections
+
+    async def _summarize_content(self, content: str, topic: str) -> Optional[Summary]:
+        """Summarize webpage content specifically for the research topic."""
+        prompt = f"Summarize the following content in the context of the research topic: {topic}\n\nContent:\n{content[:15000]}"
+        try:
+            return await self._generate_completion(
+                prompt=prompt,
+                system_message="Summarize webpage content accurately and extract key excerpts.",
+                temperature=0.2,
+                max_tokens=1000,
+                response_model=Summary
+            )
+        except Exception as exc:
+            logger.warning("Summarization failed for topic %s: %s", topic, exc)
+            return None
+
+    async def _generate_completion(
         self,
         prompt: str,
         system_message: Optional[str] = None,
         temperature: float = 0.3,
         max_tokens: int = 2000,
-    ) -> str:
+        response_model: Optional[Any] = None,
+    ) -> Any:
         """Generate a completion using the LLM client.
 
         Args:
@@ -223,15 +479,17 @@ class DeepResearchNodes:
             system_message: Optional system message
             temperature: Sampling temperature
             max_tokens: Maximum tokens
+            response_model: Optional Pydantic model for structured output
 
         Returns:
-            Generated text
+            Generated text or Pydantic model instance
         """
-        return self.llm_client.generate_completion(
+        return await self.llm_client.async_generate_completion(
             prompt=prompt,
             system_message=system_message,
             temperature=temperature,
             max_tokens=max_tokens,
+            response_model=response_model,
         )
 
     async def clarify_with_user(
@@ -239,21 +497,9 @@ class DeepResearchNodes:
         state: DeepResearchAgentState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Analyze user messages and ask clarifying questions if needed.
-
-        This node checks whether the research request is clear enough
-        to proceed, or if clarification is needed from the user.
-
-        Args:
-            state: Current agent state
-            config: Optional runnable config
-
-        Returns:
-            Command dict for routing
-        """
+        """Analyze user messages and ask clarifying questions if needed."""
         from langgraph.types import Command
 
-        # Check if clarification is enabled
         if not self.config.allow_clarification:
             return Command(goto="write_research_brief")
 
@@ -265,38 +511,27 @@ class DeepResearchNodes:
             date=get_today_str(),
         )
 
-        # Generate clarification analysis
-        response_text = self._generate_completion(
+        # Generate structured clarification analysis
+        response: ClarifyWithUser = await self._generate_completion(
             prompt=prompt,
-            temperature=0.3,
-            max_tokens=500,
+            temperature=0.2,
+            max_tokens=1000,
+            response_model=ClarifyWithUser,
         )
 
-        # Parse JSON response (simplified - in production use proper parsing)
-        try:
-            import json
-            response = json.loads(response_text)
-            need_clarification = response.get("need_clarification", False)
-            question = response.get("question", "")
-            verification = response.get("verification", "")
-        except (json.JSONDecodeError, AttributeError):
-            need_clarification = False
-            question = ""
-            verification = "Proceeding with research based on provided information."
+        if not response:
+            logger.warning("Failed to get structured clarification response. Proceeding.")
+            return Command(goto="write_research_brief")
 
-        if need_clarification:
+        if response.need_clarification:
             return Command(
                 goto="__end__",
-                update={
-                    "messages": [AIMessage(content=question)],
-                },
+                update={"messages": [AIMessage(content=response.question)]},
             )
         else:
             return Command(
                 goto="write_research_brief",
-                update={
-                    "messages": [AIMessage(content=verification)],
-                },
+                update={"messages": [AIMessage(content=response.verification)]},
             )
 
     async def write_research_brief(
@@ -304,18 +539,7 @@ class DeepResearchNodes:
         state: DeepResearchAgentState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Transform user messages into a structured research brief.
-
-        This node analyzes the user's request and generates a focused
-        research brief that will guide the supervisor.
-
-        Args:
-            state: Current agent state
-            config: Optional runnable config
-
-        Returns:
-            Command dict for routing
-        """
+        """Transform user messages into a structured research brief."""
         from langgraph.types import Command
 
         messages = state.get("messages", [])
@@ -326,14 +550,16 @@ class DeepResearchNodes:
             date=get_today_str(),
         )
 
-        # Generate research brief
-        research_brief = self._generate_completion(
+        # Generate structured research brief
+        response: ResearchQuestion = await self._generate_completion(
             prompt=prompt,
             temperature=0.3,
-            max_tokens=1000,
+            max_tokens=1500,
+            response_model=ResearchQuestion,
         )
 
-        # Create supervisor system prompt
+        research_brief = response.research_brief if response else messages_text
+
         supervisor_system_prompt = LEAD_RESEARCHER_PROMPT.format(
             date=get_today_str(),
             max_researcher_iterations=self.config.max_researcher_iterations,
@@ -359,47 +585,37 @@ class DeepResearchNodes:
         state: SupervisorState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Lead research supervisor that plans and delegates research.
-
-        The supervisor analyzes the research brief and decides how to
-        break down the research into manageable tasks. It delegates
-        to sub-researchers via the ConductResearch tool.
-
-        Args:
-            state: Current supervisor state
-            config: Optional runnable config
-
-        Returns:
-            Command dict for routing
-        """
+        """Lead research supervisor that plans and delegates research."""
         from langgraph.types import Command
+        from langchain_core.messages import AIMessage
+        from pydantic import BaseModel, Field
 
-        supervisor_messages = state.get("supervisor_messages", [])
+        research_iterations = state.get("research_iterations", 0)
+        
+        # Check iteration limit early
+        if research_iterations >= self.config.max_researcher_iterations:
+            logger.info("Max research iterations reached (%d). Stopping.", research_iterations)
+            return Command(goto="__end__")
 
-        # Create prompt for supervisor decision-making
-        messages_text = "\n".join([
-            f"{type(m).__name__}: {m.content if hasattr(m, 'content') else str(m)}"
-            for m in supervisor_messages
-        ])
+        # Handle override reducer format - may be dict with "type": "override"
+        raw_messages = state.get("supervisor_messages", [])
+        if isinstance(raw_messages, dict) and raw_messages.get("type") == "override":
+            supervisor_messages = raw_messages.get("value", [])
+        elif isinstance(raw_messages, list):
+            supervisor_messages = raw_messages
+        else:
+            supervisor_messages = []
+        
+        class SupervisorDecision(BaseModel):
+            """Decision taken by the lead researcher."""
+            action: str = Field(description="Action to take: 'research' (delegate tasks) or 'complete' (finish research)")
+            topics: list[str] = Field(default_factory=list, description="Sub-topics for 'research' action. Max 3.")
+            reflection: str = Field(description="Internal reflection on current progress and strategy")
+            reason: str = Field(description="Public reason for this decision")
 
-        prompt = f"""Based on the research brief and current progress, decide your next action.
+        prompt = f"Based on the research brief and current progress, decide your next action.\n\nResearch Brief:\n{state.get('research_brief', '')}\n\nCurrent supervisor history:\n{get_buffer_string(supervisor_messages[-5:])}\n\nYou MUST decide to either:\n1. Conduct more research on specific sub-topics (ConductResearch).\n2. Conclude that research is complete (ResearchComplete).\n\nUse your reflection to plan the next steps carefully."
 
-Current supervisor messages:
-{messages_text}
-
-Research Brief:
-{state.get('research_brief', '')}
-
-Consider:
-1. Should I delegate more research (ConductResearch)?
-2. Have I gathered enough information (ResearchComplete)?
-3. Should I think more about my strategy (think_tool)?
-
-Be decisive and efficient. Don't over-research.
-"""
-
-        # Generate supervisor response
-        response = self._generate_completion(
+        decision: SupervisorDecision = await self._generate_completion(
             prompt=prompt,
             system_message=LEAD_RESEARCHER_PROMPT.format(
                 date=get_today_str(),
@@ -407,49 +623,28 @@ Be decisive and efficient. Don't over-research.
                 max_concurrent_research_units=self.config.max_concurrent_research_units,
             ),
             temperature=0.4,
-            max_tokens=500,
+            max_tokens=1000,
+            response_model=SupervisorDecision,
         )
 
-        # Determine routing based on response
-        research_iterations = state.get("research_iterations", 0)
+        if not decision:
+            logger.warning("Supervisor failed to make a structured decision. Stopping.")
+            return Command(goto="__end__")
 
-        # Handle empty response (rate limiting or errors)
-        if not response or len(response.strip()) < 10:
-            logger.warning("Supervisor received empty response (likely rate limited). Stopping research.")
+        logger.info("Supervisor Reflection: %s", decision.reflection)
+
+        if decision.action == "complete" or not decision.topics:
             return Command(
                 goto="__end__",
-                update={
-                    "notes": state.get("notes", []),
-                    "raw_notes": state.get("raw_notes", []),
-                },
-            )
-
-        # Check for completion signals
-        if any(x in response.lower() for x in ["research is complete", "sufficient", "enough information", "complete"]):
-            return Command(
-                goto="__end__",
-                update={
-                    "notes": state.get("notes", []),
-                    "raw_notes": state.get("raw_notes", []),
-                },
-            )
-
-        # Check iteration limit
-        if research_iterations >= self.config.max_researcher_iterations:
-            logger.info("Max research iterations reached (%d). Stopping.", research_iterations)
-            return Command(
-                goto="__end__",
-                update={
-                    "notes": state.get("notes", []),
-                    "raw_notes": state.get("raw_notes", []),
-                },
+                update={"supervisor_messages": [AIMessage(content=f"Research complete. Reason: {decision.reason}")]}
             )
 
         return Command(
             goto="supervisor_tools",
             update={
-                "supervisor_messages": [AIMessage(content=response)],
+                "supervisor_messages": [AIMessage(content=f"Delegating research on topics: {', '.join(decision.topics)}. Reason: {decision.reason}")],
                 "research_iterations": research_iterations + 1,
+                "metadata": {"next_topics": decision.topics}
             },
         )
 
@@ -458,83 +653,38 @@ Be decisive and efficient. Don't over-research.
         state: SupervisorState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Execute supervisor tools (research delegation, thinking).
-
-        This node handles the execution of supervisor tool calls,
-        including delegating to research sub-agents.
-
-        Args:
-            state: Current supervisor state
-            config: Optional runnable config
-
-        Returns:
-            Command dict for routing
-        """
+        """Execute supervisor tools (research delegation)."""
         from langgraph.types import Command
 
-        supervisor_messages = state.get("supervisor_messages", [])
-        research_iterations = state.get("research_iterations", 0)
-
-        # Check for empty supervisor message (rate limited LLM)
-        if supervisor_messages:
-            last_msg = supervisor_messages[-1]
-            content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
-            if not content or len(content.strip()) < 10:
-                logger.warning("Supervisor tools received empty message. Exiting research loop.")
-                return Command(
-                    goto="__end__",
-                    update={"notes": state.get("notes", []), "raw_notes": state.get("raw_notes", [])},
-                )
-        else:
-            return Command(
-                goto="__end__",
-                update={"notes": [], "raw_notes": []},
-            )
-
-        most_recent = supervisor_messages[-1]
-        content = most_recent.content if hasattr(most_recent, "content") else str(most_recent)
-
-        # Check for exit conditions
-        if research_iterations >= self.config.max_researcher_iterations:
-            return Command(
-                goto="__end__",
-                update={
-                    "notes": state.get("notes", []),
-                    "raw_notes": state.get("raw_notes", []),
-                },
-            )
-
-        # Look for research topics in the response
-        # (Simplified - in production use structured tool calls)
-        research_topics = self._extract_research_topics(content)
+        research_topics = state.get("metadata", {}).get("next_topics", [])
 
         if research_topics:
-            # Execute research in parallel
+            logger.info("Supervisor delegating research on: %s", research_topics)
             research_results = await self._execute_research_units(
                 research_topics[:self.config.max_concurrent_research_units],
                 state,
             )
 
-            # Update state with research results
             notes = list(state.get("notes", []))
             raw_notes = list(state.get("raw_notes", []))
 
             for result in research_results:
                 if result.get("compressed_research"):
                     notes.append(result["compressed_research"])
-                if result.get("raw_notes"):
-                    raw_notes.extend(result["raw_notes"])
+                raw_notes_data = result.get("raw_notes") or []
+                if raw_notes_data:
+                    raw_notes.extend(raw_notes_data)
 
             return Command(
                 goto="supervisor",
                 update={
-                    "supervisor_messages": [],
+                    "supervisor_messages": [AIMessage(content=f"Research units returned {len(research_results)} findings.")],
                     "notes": notes,
                     "raw_notes": raw_notes,
+                    "metadata": {"next_topics": []}
                 },
             )
 
-        # No research topics found, continue supervisor
         return Command(goto="supervisor")
 
     async def _execute_research_units(
@@ -542,178 +692,117 @@ Be decisive and efficient. Don't over-research.
         topics: list[str],
         parent_state: SupervisorState,
     ) -> list[dict[str, Any]]:
-        """Execute research units in parallel.
-
-        Args:
-            topics: List of research topics
-            parent_state: Parent supervisor state
-
-        Returns:
-            List of research results
-        """
-        tasks = []
-        for topic in topics:
-            task = self._execute_single_researcher(
-                research_topic=topic,
-                parent_config=parent_state,
-            )
-            tasks.append(task)
-
+        """Execute research units in parallel with retry policies."""
+        tasks = [
+            self._execute_research_unit_with_retry(topic, parent_state)
+            for topic in topics
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         processed_results = []
-        for result in results:
+        for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.error("Research unit failed: %s", result)
-                processed_results.append({"compressed_research": "", "raw_notes": []})
+                logger.error("Research unit %d failed: %s", i, result)
+                processed_results.append({
+                    "compressed_research": f"Research on '{topics[i]}' failed: {str(result)}",
+                    "raw_notes": [],
+                    "success": False,
+                })
             else:
-                processed_results.append(result)
+                processed_results.append({**result, "success": True})
+
+        successful = sum(1 for r in processed_results if r.get("success"))
+        logger.info("Research units completed: %d/%d successful", successful, len(topics))
 
         return processed_results
+
+    async def _execute_research_unit_with_retry(
+        self,
+        topic: str,
+        parent_state: SupervisorState,
+        max_attempts: int = 2,
+    ) -> dict[str, Any]:
+        """Execute a research unit with retry on failure."""
+        last_error = None
+        for attempt in range(max_attempts):
+            try:
+                return await self._execute_single_researcher(topic, parent_state)
+            except Exception as exc:
+                last_error = exc
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(1.0 * (2 ** attempt))
+        raise last_error
 
     async def _execute_single_researcher(
         self,
         research_topic: str,
         parent_config: dict,
     ) -> dict[str, Any]:
-        """Execute a single research unit.
-
-        Args:
-            research_topic: The topic to research
-            parent_config: Configuration from parent
-
-        Returns:
-            Research results dict
-        """
+        """Execute a single research unit with deep exploration."""
         researcher_state: ResearcherState = {
             "research_topic": research_topic,
-            "researcher_messages": [HumanMessage(content=research_topic)],
+            "researcher_messages": [HumanMessage(content=f"Researching topic: {research_topic}")],
             "compressed_research": "",
             "tool_call_iterations": 0,
             "raw_notes": [],
         }
 
-        # Run researcher loop with real Tavily search
-        for iteration in range(min(5, self.config.max_react_tool_calls)):
+        max_iterations = self.config.max_react_tool_calls
+        
+        for iteration in range(max_iterations):
             messages_text = get_buffer_string(researcher_state["researcher_messages"])
+            reflection_prompt = f"You are researching: {research_topic}\nCurrent progress:\n{messages_text[-4000:]}\n\nAnalyze what you have found and what is missing. If you have enough information, say 'COMPLETE'. Otherwise, provide a specific search query to fill the gaps."
 
-            # LLM decides what to search next
-            response = self._generate_completion(
-                prompt=f"""Research topic: {research_topic}
-
-Current conversation:
-{messages_text}
-
-Based on the research topic and current conversation, decide what to search for next.
-If you need more information, provide a specific search query.
-If you have enough information, say "RESEARCH_COMPLETE".
-
-Return exactly one of:
-- A search query (1-2 sentences, specific)
-- "RESEARCH_COMPLETE" if you have enough information
-
-Keep search queries focused and specific for best results.""",
-                system_message="You are a research assistant. Generate specific search queries.",
-                temperature=0.3,
-                max_tokens=500,
+            reflection = await self._generate_completion(
+                prompt=reflection_prompt,
+                system_message="You are a meticulous research analyst. Reflect on gaps and plan next steps.",
+                temperature=0.2,
+                max_tokens=500
             )
-
-            if "RESEARCH_COMPLETE" in response.strip().upper()[:20]:
+            
+            researcher_state["researcher_messages"].append(AIMessage(content=f"[Reflection] {reflection}"))
+            if "COMPLETE" in reflection.upper()[:20]:
                 break
 
-            # Execute search with fallback chain (Tavily → web_search)
-            search_result = await self._search_with_fallback(response.strip())
+            search_query = reflection.split("\n")[-1].strip()
+            if not search_query or len(search_query) < 5:
+                search_query = research_topic
 
+            search_result = await self._search_with_fallback(search_query)
             results_list = search_result.get("results", [])
-            answer = search_result.get("answer", "")
+            if not results_list:
+                researcher_state["researcher_messages"].append(AIMessage(content="No results found for this query."))
+                continue
 
-            if results_list or answer:
-                search_summary = f"Search: {response.strip()}\n\n"
-                if answer:
-                    search_summary += f"AI Answer: {answer}\n\n"
-                if results_list:
-                    for r in results_list[:3]:
-                        search_summary += f"- [{r.get('title', '')}]({r.get('url', '')}): {r.get('content', '')[:200]}...\n"
+            summarization_tasks = []
+            valid_results = []
+            for res in results_list[:3]:
+                url = res.get("url", "")
+                if url:
+                    content = await self._extract_content(url)
+                    if content:
+                        summarization_tasks.append(self._summarize_content(content, research_topic))
+                        valid_results.append(res)
+            
+            if summarization_tasks:
+                summaries = await asyncio.gather(*summarization_tasks)
+                for i, summary in enumerate(summaries):
+                    if summary:
+                        url = valid_results[i].get("url")
+                        researcher_state["raw_notes"].append(f"Source: {url}\nSummary: {summary.summary}\nExcerpts: {summary.key_excerpts}")
+                        researcher_state["researcher_messages"].append(AIMessage(content=f"[Findings from {url}]\n{summary.summary[:1000]}..."))
 
-                researcher_state["raw_notes"].append({
-                    "query": response.strip(),
-                    "answer": answer,
-                    "sources": [{"title": r.get("title"), "url": r.get("url")} for r in results_list[:5]],
-                })
+            researcher_state["tool_call_iterations"] += 1
 
-                # Extract detailed content from top URLs IN PARALLEL
-                extracted_results = await self._extract_content_parallel(results_list[:3])
+        compressed = await self._compress_research(researcher_state)
+        return {"compressed_research": compressed, "raw_notes": researcher_state["raw_notes"]}
 
-                for extracted in extracted_results:
-                    researcher_state["raw_notes"].append(extracted)
-                    content_preview = extracted.get("content", "")[:2000]
-                    tool_used = extracted.get("tool_used", "unknown")
-                    researcher_state["researcher_messages"].append(
-                        AIMessage(content=f"[Content extracted via {tool_used}]\n{content_preview}...")
-                    )
-
-                researcher_state["researcher_messages"].append(
-                    AIMessage(content=f"[Search Results]\n{search_summary}")
-                )
-                researcher_state["tool_call_iterations"] += 1
-            else:
-                researcher_state["researcher_messages"].append(
-                    AIMessage(content=f"[Search Error] No results found for: {response.strip()}")
-                )
-
-            # Use think_tool to reflect on progress and decide next action
-            think_tool = self._get_think_tool()
-            messages_text = get_buffer_string(researcher_state["researcher_messages"])
-            think_result = await think_tool.execute({
-                "input": f"Research topic: {research_topic}\n\nMy current research:\n{messages_text}\n\nI've done {researcher_state['tool_call_iterations']} search(es). Should I search more or stop?",
-                "depth": "standard",
-            })
-
-            if think_result.get("success") and think_result.get("data"):
-                reflection = think_result["data"]
-                confidence = reflection.get("confidence", "medium")
-                recommended = reflection.get("recommended_action", "")
-
-                researcher_state["researcher_messages"].append(
-                    AIMessage(content=f"[Think Reflection] Confidence: {confidence}. {recommended}")
-                )
-
-                # Stop if confidence is high or recommended action says to stop
-                if confidence == "high" or "stop" in recommended.lower()[:50]:
-                    break
-            elif iteration == min(5, self.config.max_react_tool_calls) - 1:
-                # Force stop at max iterations
-                break
-
-        # Compress research results
-        compressed = self._compress_research(researcher_state)
-
-        return {
-            "compressed_research": compressed,
-            "raw_notes": [get_buffer_string(researcher_state["researcher_messages"])],
-        }
-
-    def _compress_research(self, researcher_state: ResearcherState) -> str:
-        """Compress research findings into a summary.
-
-        Args:
-            researcher_state: The researcher state
-
-        Returns:
-            Compressed research summary
-        """
+    async def _compress_research(self, researcher_state: ResearcherState) -> str:
+        """Compress research findings into a summary."""
         messages = researcher_state.get("researcher_messages", [])
         messages_text = get_buffer_string(messages)
-
-        prompt = f"""{COMPRESS_RESEARCH_SIMPLE_HUMAN_MESSAGE}
-
-Research topic: {researcher_state.get('research_topic', '')}
-
-Messages to compress:
-{messages_text}
-"""
-
-        return self._generate_completion(
+        prompt = f"{COMPRESS_RESEARCH_SIMPLE_HUMAN_MESSAGE}\n\nResearch topic: {researcher_state.get('research_topic', '')}\n\nMessages to compress:\n{messages_text}"
+        return await self._generate_completion(
             prompt=prompt,
             system_message=COMPRESS_RESEARCH_SYSTEM_PROMPT.format(date=get_today_str()),
             temperature=0.3,
@@ -721,80 +810,77 @@ Messages to compress:
         )
 
     def _extract_research_topics(self, content: str) -> list[str]:
-        """Extract research topics from content.
-
-        Args:
-            content: Text content to analyze
-
-        Returns:
-            List of research topics
-        """
+        """Extract research topics from content."""
         topics = []
-
-        # Simple extraction - look for topic indicators
         lines = content.split("\n")
         for line in lines:
             line = line.strip()
             if line and len(line) > 10:
-                # Remove common prefixes
                 for prefix in ["- ", "* ", "1. ", "2. ", "3. ", "Topic: ", "Research: "]:
                     if line.startswith(prefix):
                         line = line[len(prefix):]
                 if line:
                     topics.append(line)
+        return topics[:3]
 
-        return topics[:3]  # Limit to 3 topics
+    async def merge_results(
+        self,
+        state: SupervisorState,
+    ) -> dict[str, Any]:
+        """Merge and deduplicate research results from parallel units.
+
+        This node runs after supervisor_tools to aggregate results
+        from parallel research units and remove duplicates.
+        """
+        notes = state.get("notes", [])
+        raw_notes = state.get("raw_notes", [])
+
+        seen_urls = set()
+        deduplicated_raw_notes = []
+        for note in raw_notes:
+            url_match = note.split("Source: ")[1].split("\n")[0] if "Source: " in note else None
+            if url_match and url_match in seen_urls:
+                continue
+            if url_match:
+                seen_urls.add(url_match)
+            deduplicated_raw_notes.append(note)
+
+        unique_notes = list(dict.fromkeys(notes))
+
+        logger.info(
+            "Merge results: %d notes, %d raw notes (after deduplication)",
+            len(unique_notes),
+            len(deduplicated_raw_notes),
+        )
+
+        return {
+            "notes": {"type": "override", "value": unique_notes},
+            "raw_notes": {"type": "override", "value": deduplicated_raw_notes},
+        }
 
     async def final_report_generation(
         self,
         state: DeepResearchAgentState,
         config: Optional[dict] = None,
     ) -> dict[str, Any]:
-        """Generate the final research report.
-
-        This node takes all collected research and synthesizes it
-        into a comprehensive final report.
-
-        Args:
-            state: Current agent state
-            config: Optional runnable config
-
-        Returns:
-            Update dict for final state
-        """
+        """Generate the final research report."""
         research_brief = state.get("research_brief", "")
         notes = state.get("notes", [])
-        messages = state.get("messages", [])
-        messages_text = get_buffer_string(messages)
         findings = "\n\n".join(notes) if notes else "No findings collected."
-
         prompt = FINAL_REPORT_GENERATION_PROMPT.format(
             research_brief=research_brief,
-            messages=messages_text,
+            messages=get_buffer_string(state.get("messages", [])),
             findings=findings,
             date=get_today_str(),
         )
-
-        final_report = self._generate_completion(
+        final_report = await self._generate_completion(
             prompt=prompt,
             temperature=0.4,
             max_tokens=self.config.final_report_model_max_tokens,
         )
-
-        return {
-            "final_report": final_report,
-            "messages": [AIMessage(content=final_report)],
-        }
+        return {"final_report": final_report, "messages": [AIMessage(content=final_report)]}
 
 
-# Factory function for creating nodes
 def create_nodes(config: Optional[DeepResearchConfig] = None) -> DeepResearchNodes:
-    """Create a DeepResearchNodes instance.
-
-    Args:
-        config: Optional configuration
-
-    Returns:
-        DeepResearchNodes instance
-    """
+    """Create a DeepResearchNodes instance."""
     return DeepResearchNodes(config=config)

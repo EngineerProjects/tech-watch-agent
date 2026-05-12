@@ -5,6 +5,8 @@ This module tests the BaseAgent class and AgentConfig dataclass,
 ensuring proper initialization, lifecycle management, and error handling.
 """
 
+from typing import Any
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 

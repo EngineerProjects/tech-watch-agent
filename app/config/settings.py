@@ -27,8 +27,12 @@ class Settings:
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_api_key: str = ""
     llm_model: str = ""
+    llm_fallback_models: list[str] = field(default_factory=list)
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
+
+    # Z.ai specific settings
+    zai_api_key: str = ""
 
     newsletter_title: str = "Tech Watch Agent"
     newsletter_topics: list[str] = field(
@@ -59,6 +63,7 @@ class Settings:
     gmail_token_path: str = "token.json"
 
     tavily_api_key: str = ""
+    serper_api_key: str = ""
     scrapling_fetcher: str = "basic"
     scrapling_timeout: int = 30
     scrapling_max_content_length: int = 50000
@@ -97,8 +102,10 @@ class Settings:
             llm_base_url=os.getenv("LLM_BASE_URL", ""),
             llm_api_key=os.getenv("LLM_API_KEY", ""),
             llm_model=os.getenv("LLM_MODEL", ""),
+            llm_fallback_models=_parse_csv(os.getenv("LLM_FALLBACK_MODELS", "")),
             llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
             llm_max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000")),
+            zai_api_key=os.getenv("ZAI_API_KEY", ""),
             newsletter_title=os.getenv("NEWSLETTER_TITLE", "Tech Watch Agent"),
             newsletter_topics=_parse_csv(
                 os.getenv(
@@ -116,6 +123,7 @@ class Settings:
             gmail_credentials_path=os.getenv("GMAIL_CREDENTIALS_PATH", "credentials.json"),
             gmail_token_path=os.getenv("GMAIL_TOKEN_PATH", "token.json"),
             tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
+            serper_api_key=os.getenv("SERPER_API_KEY", ""),
             scrapling_fetcher=os.getenv("SCRAPLING_FETCHER", "basic"),
             scrapling_timeout=int(os.getenv("SCRAPLING_TIMEOUT", "30")),
             scrapling_max_content_length=int(os.getenv("SCRAPLING_MAX_CONTENT_LENGTH", "50000")),

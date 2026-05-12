@@ -5,9 +5,10 @@ Orchestrator agent configuration.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Literal, Union
 
 from app.agents.base.base_agent import AgentConfig
+from app.agents.orchestrator.graph import RetryPolicy
 
 
 @dataclass
@@ -20,6 +21,14 @@ class OrchestratorConfig(AgentConfig):
     - max_iterations: Max analysis cycles
     - parallel_research: Enable parallel tool dispatch
     - send_email: Enable email delivery
+    - checkpointing: Enable state persistence
+    - human_approval: Enable human-in-the-loop checkpoints (chat mode)
+    - autonomous: Enable fully autonomous mode (bypass all human approval)
+
+    Mode Summary:
+    - autonomous=True: No human approval, runs fully automated (for scheduling)
+    - autonomous=False + human_approval=True: Full human-in-the-loop (chat mode)
+    - autonomous=False + human_approval=False: Auto-approval for quality content
     """
 
     name: str = "OrchestratorAgent"
@@ -36,6 +45,19 @@ class OrchestratorConfig(AgentConfig):
     send_email: bool = True
     topics: list[str] = field(default_factory=list)
     custom_sources: list[str] = field(default_factory=list)
+
+    autonomous: bool = False
+    human_approval_enabled: bool = False
+    approval_threshold: float = 0.7
+
+    enable_checkpointing: bool = False
+    checkpoint_backend: Literal["memory", "postgres"] = "memory"
+    retry_policy: RetryPolicy = field(default_factory=lambda: {
+        "max_attempts": 3,
+        "initial_interval": 1.0,
+        "backoff_factor": 2.0,
+        "max_interval": 60.0,
+    })
 
     def __post_init__(self) -> None:
         if not self.model:

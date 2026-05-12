@@ -152,53 +152,29 @@ class ResearcherOutputState(TypedDict, total=False):
     raw_notes: Annotated[list[str], add_reducer]
 
 
-class ClarifyWithUser(TypedDict):
-    """Structured output for user clarification requests.
-
-    Used by the clarification node to determine if more
-    information is needed from the user.
-
-    Attributes:
-        need_clarification: Whether clarification is needed
-        question: Question to ask the user
-        verification: Verification message if no clarification needed
-    """
-
-    need_clarification: bool
-    question: str
-    verification: str
+from pydantic import BaseModel, Field
 
 
-class ResearchQuestion(TypedDict):
-    """Structured output for research brief generation.
-
-    Used by the brief writing node to transform user messages
-    into a structured research brief.
-
-    Attributes:
-        research_brief: The generated research brief
-    """
-
-    research_brief: str
+class ClarifyWithUser(BaseModel):
+    """Structured output for user clarification requests."""
+    need_clarification: bool = Field(description="Whether clarification is needed from the user")
+    question: str = Field(description="The clarifying question to ask the user")
+    verification: str = Field(description="Verification message if no clarification is needed")
 
 
-class ConductResearch(TypedDict):
-    """Tool definition for conducting research.
-
-    This is a tool that the supervisor uses to delegate
-    research tasks to sub-researchers.
-
-    Attributes:
-        research_topic: The topic to research
-    """
-
-    research_topic: str
+class ResearchQuestion(BaseModel):
+    """Structured output for research brief generation."""
+    research_brief: str = Field(description="The generated structured research brief")
 
 
-class ResearchComplete(TypedDict):
-    """Tool definition indicating research is complete.
+class ConductResearch(BaseModel):
+    """Structured output for conducting research on a sub-topic."""
+    research_topics: list[str] = Field(
+        description="List of specific sub-topics to research. Max 3.",
+        max_length=3
+    )
 
-    Used by the supervisor to signal that sufficient
-    research has been conducted.
-    """
-    pass
+
+class ResearchComplete(BaseModel):
+    """Structured output indicating research is complete."""
+    reason: str = Field(description="Reason why research is considered complete")

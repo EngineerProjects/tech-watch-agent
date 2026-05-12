@@ -207,7 +207,12 @@ class BaseAgent(ABC):
         pass
 
     @abstractmethod
-    async def execute(self, input_data: Any) -> AgentResult:
+    async def execute(
+        self,
+        input_data: Any,
+        session_id: Optional[str] = None,
+        memory_context: Optional[dict[str, Any]] = None,
+    ) -> AgentResult:
         """Execute the agent with the given input.
 
         This is the main entry point for agent execution. Subclasses
@@ -215,6 +220,8 @@ class BaseAgent(ABC):
 
         Args:
             input_data: The input data for the agent (type depends on agent)
+            session_id: Optional session ID for memory context
+            memory_context: Optional pre-loaded memory context for RAG
 
         Returns:
             AgentResult with the execution outcome
@@ -316,6 +323,57 @@ class BaseAgent(ABC):
             "config": self.config.to_dict(),
         }
 
+    async def load_memory_context(
+        self,
+        session_id: str,
+        query: Optional[str] = None,
+        max_results: int = 5,
+    ) -> dict[str, Any]:
+        """Load relevant context from memory for this session.
+
+        Args:
+            session_id: Session ID to load context for
+            query: Optional query for semantic search
+            max_results: Maximum number of results to return
+
+        Returns:
+            Dictionary with memory context
+        """
+        context = {
+            "session_id": session_id,
+            "recent_articles": [],
+            "relevant_findings": [],
+            "topics": [],
+        }
+
+        try:
+            from app.tools.memory.search_memory import SearchMemoryTool, GetRecentContextTool
+
+            if session_id:
+                recent_tool = GetRecentContextTool()
+                recent_result = await recent_tool.execute({
+                    "session_id": session_id,
+                    "limit": max_results,
+                })
+
+                if recent_result.get("success"):
+                    context.update(recent_result.get("data", {}))
+
+            if query:
+                search_tool = SearchMemoryTool()
+                search_result = await search_tool.execute({
+                    "query": query,
+                    "top_k": max_results,
+                })
+
+                if search_result.get("success"):
+                    context["relevant_findings"] = search_result.get("data", {}).get("results", [])
+
+        except Exception as exc:
+            logger.warning("Failed to load memory context: %s", exc)
+
+        return context
+
     def validate_input(self, input_data: Any) -> bool:
         """Validate input data before execution.
 
@@ -345,6 +403,7 @@ class AgentRegistry:
 
     def __init__(self) -> None:
         self._agents: dict[str, BaseAgent] = {}
+        self._enabled: set[str] = set()
 
     def register(self, name: str, agent: BaseAgent) -> None:
         """Register an agent with a given name.
@@ -359,6 +418,7 @@ class AgentRegistry:
         if name in self._agents:
             raise ValueError(f"Agent '{name}' is already registered")
         self._agents[name] = agent
+        self._enabled.add(name)
 
     def get(self, name: str) -> Optional[BaseAgent]:
         """Get an agent by name.
@@ -371,18 +431,34 @@ class AgentRegistry:
         """
         return self._agents.get(name)
 
-    def unregister(self, name: str) -> None:
+    def unregister(self, name: str) -> bool:
         """Unregister an agent by name.
 
         Args:
             name: The name of the agent to unregister
 
+        Returns:
+            True if unregistered, False if not found
+            
         Raises:
-            KeyError: If the agent is not registered
+            KeyError: If the agent is not registered (for backwards compat)
         """
         if name not in self._agents:
             raise KeyError(f"Agent '{name}' is not registered")
         del self._agents[name]
+        self._enabled.discard(name)
+        return True
+
+    def is_enabled(self, name: str) -> bool:
+        """Check if an agent is enabled.
+        
+        Args:
+            name: Agent name
+            
+        Returns:
+            True if enabled (always true for base registry)
+        """
+        return name in self._agents
 
     def list_agents(self) -> list[str]:
         """List all registered agent names.
@@ -407,3 +483,34 @@ class AgentRegistry:
                 await agent.cleanup()
             except Exception as exc:
                 logger.error("Failed to cleanup agent '%s': %s", name, exc)
+
+    @property
+    def count(self) -> int:
+        """Return number of registered agents."""
+        return len(self._agents)
+
+    def __contains__(self, name: str) -> bool:
+        """Check if agent is registered (supports 'in' operator)."""
+        return name in self._agents
+
+    def enable(self, name: str) -> bool:
+        """Enable a registered agent."""
+        if name not in self._agents:
+            return False
+        self._enabled.add(name)
+        return True
+
+    def disable(self, name: str) -> bool:
+        """Disable a registered agent."""
+        if name not in self._agents:
+            return False
+        self._enabled.discard(name)
+        return True
+
+    def is_enabled(self, name: str) -> bool:
+        """Check if an agent is enabled."""
+        return name in self._enabled
+
+    def list_by_category(self, category: str) -> list[str]:
+        """List agents by category (not applicable for this registry)."""
+        return []

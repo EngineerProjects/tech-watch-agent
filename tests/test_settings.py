@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from app.config.settings import Settings
+from app.config.settings import Settings, get_settings
 
 
 def test_settings_parse_lists_from_env_file(tmp_path: Path) -> None:
+    get_settings.cache_clear()
+    os.environ.pop("NEWSLETTER_TOPICS", None)
+    os.environ.pop("RECIPIENT_EMAILS", None)
+    os.environ.pop("SCHEDULE_TIMES", None)
+
     env_file = tmp_path / ".env"
     env_file.write_text(
         "\n".join(

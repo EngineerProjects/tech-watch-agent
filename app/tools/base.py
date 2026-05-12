@@ -32,6 +32,7 @@ class ToolCategory(Enum):
     DATA = "data"  # Data processing/analysis tools
     UTILITY = "utility"  # General utility tools
     MEMORY = "memory"  # Memory/retrieval tools
+    DELIVERY = "delivery"  # Email/delivery tools
 
 
 @dataclass
@@ -331,6 +332,14 @@ class CompositeTool(BaseTool):
         super().__init__()
         self._tools: dict[str, BaseTool] = {}
 
+    @property
+    def name(self) -> str:
+        return "composite_tool"
+
+    @property
+    def description(self) -> str:
+        return "A tool composed of multiple sub-tools"
+
     def add_tool(self, name: str, tool: BaseTool) -> None:
         """Add a sub-tool to this composite.
 
@@ -355,3 +364,6 @@ class CompositeTool(BaseTool):
     def tools(self) -> dict[str, BaseTool]:
         """Get all sub-tools."""
         return self._tools.copy()
+
+    async def execute(self, params: dict[str, Any]) -> ToolResult:
+        raise NotImplementedError("Subclasses must implement execute()")
