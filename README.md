@@ -8,6 +8,17 @@
 
 **Plateforme de veille technologique multi-agents** pour planifier des recherches, agréger des sources, produire des synthèses et livrer des rapports via API, exécution ponctuelle ou scheduler.
 
+> Un backend de veille pensé pour passer d'une idée de recherche à un rapport structuré, traçable et reprenable, sans recoller manuellement des résultats issus de dix outils différents.
+
+## Points forts
+
+| Point fort | Valeur |
+|---|---|
+| Orchestration | pipeline structuré avec planification, exécution, analyse et synthèse |
+| Reprise | sessions persistées avec versions de plan et checkpoints |
+| Recherche | outils web, social, PDF et deep research agent |
+| Déploiement | exécution locale, Docker Compose et scheduler |
+
 ## Pourquoi ce projet
 
 `tech-watch-agent` vise un cas simple à formuler mais pénible à industrialiser:
@@ -33,23 +44,36 @@ Le projet s’appuie sur un orchestrateur LangGraph, un système d’outils exte
 | API | endpoints pour sessions, orchestrateur, recherche, outils et providers |
 | Runtime | local, Docker Compose, scheduler |
 
+## Modes d'exécution
+
+| Mode | Commande | Usage |
+|---|---|---|
+| API | `python -m app.main --mode api` | exposer les endpoints FastAPI |
+| One-shot V2 | `python -m app.main --mode once --no-email` | lancer le pipeline orchestrateur |
+| One-shot V1 | `python -m app.main --mode once --v1 --no-email` | utiliser le pipeline legacy |
+| Scheduler | `python -m app.main --mode schedule` | lancer les exécutions planifiées |
+| Docker | `make up-build` | démarrer la stack complète |
+
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[Client API / CLI / Scheduler] --> B[Orchestrator V2]
+    A[API / CLI / Scheduler] --> B[Orchestrator V2]
     B --> C[Planner]
-    C --> D[Research Steps]
-    D --> E[Tool Registry]
-    D --> F[Deep Research Agent]
-    D --> G[Newsletter Pipeline V1]
-    E --> H[Web Tools]
-    E --> I[Social Tools]
-    E --> J[Delivery Tools]
-    B --> K[Analysis + Synthesis]
-    K --> L[SessionManager]
-    L --> M[(PostgreSQL + pgvector)]
-    K --> N[Email Output]
+    C --> D[Execution Plan]
+    D --> E[Dispatcher]
+    E --> F[Tool Registry]
+    E --> G[Deep Research Agent]
+    E --> H[Newsletter V1 Path]
+    F --> I[Web Tools]
+    F --> J[Social Tools]
+    F --> K[PDF / Delivery Tools]
+    E --> L[Collector]
+    L --> M[Analyzer]
+    M --> N[Synthesizer]
+    N --> O[Email / API Result]
+    B --> P[SessionManager]
+    P --> Q[(PostgreSQL + pgvector)]
 ```
 
 ### Hiérarchie des agents
@@ -78,6 +102,22 @@ research results
   -> persisted session + checkpoints
 ```
 
+## Ce que le projet couvre
+
+### Recherche et collecte
+
+- recherche multi-source via registry d’outils
+- exécution parallèle des étapes de recherche
+- extraction de contenu web et PDF
+- collecte persistée pour réutilisation ultérieure
+
+### Analyse et restitution
+
+- synthèse structurée en sortie
+- livraison via API ou email
+- conservation des résultats pour audit ou reprise
+- séparation nette entre mémoire de travail et données articles
+
 ## Fonctionnalités principales
 
 ### Agents
@@ -88,10 +128,10 @@ research results
 
 ### Persistance et reprise
 
-- persistence par phase de session
+- persistance par phase de session
 - historique de versions de plan
 - checkpoints pour reprise d’exécution
-- endpoints de resume exposés par l’API
+- endpoints de reprise exposés par l’API
 
 ### Outils
 
@@ -104,7 +144,7 @@ research results
 - Reddit
 - ArXiv
 - YouTube
-- outils email et preview
+- outils email et prévisualisation
 
 ### LLM et résilience
 
@@ -160,6 +200,12 @@ Le compose principal est [`docker/docker-compose.yml`](docker/docker-compose.yml
 
 ```bash
 make up-build
+```
+
+Pour un démarrage plus explicite:
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
 ```
 
 Services disponibles:
@@ -238,6 +284,33 @@ make nuke
 ```
 
 `make nuke` supprime les artefacts locaux et le cache Docker inutilisé. C’est volontairement agressif.
+
+## Parcours recommandé
+
+### Pour découvrir le projet
+
+```bash
+make up-build
+make doctor
+```
+
+Puis ouvre `http://localhost:8000/docs`.
+
+### Pour développer
+
+```bash
+make lint
+make typecheck
+make test-unit
+make test-integration
+```
+
+### Pour repartir proprement
+
+```bash
+make clean
+make clean-docker-cache
+```
 
 ## API
 
