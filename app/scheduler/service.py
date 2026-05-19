@@ -27,6 +27,7 @@ from app.agents.newsletter.graph import NewsletterWorkflow
 from app.config.settings import Settings, get_settings
 from app.core.logging import get_logger
 from app.core.models import NewsletterRunResult
+from app.delivery.service import ReportDeliveryService
 from app.delivery.gmail_client import GmailDeliveryClient
 from app.delivery.newsletter_renderer import NewsletterRenderer
 from app.services.article_service import ArticleService
@@ -158,6 +159,11 @@ class OrchestratorScheduler:
         self._article_service = article_service
         self._renderer = renderer or NewsletterRenderer(self.settings)
         self._gmail_client = gmail_client or GmailDeliveryClient(self.settings)
+        self._delivery_service = ReportDeliveryService(
+            settings=self.settings,
+            renderer=self._renderer,
+            gmail_client=self._gmail_client,
+        )
         self.is_running = False
 
     async def setup(self, autonomous: bool = True) -> None:
@@ -308,15 +314,12 @@ class OrchestratorScheduler:
                 raise ValueError("Newsletter workflow returned empty content")
 
             subject = self._extract_subject(markdown_content)
-            html_content = self._renderer.render_html(markdown_content, subject)
-
-            delivery_success = None
-            if send_email and self.settings.has_email_delivery:
-                delivery_success = self._gmail_client.send_email(
-                    subject=subject,
-                    body_html=html_content,
-                    body_text=self._renderer.render_text(markdown_content),
-                )
+            delivery = self._delivery_service.deliver(
+                report=markdown_content,
+                subject=subject,
+                send=send_email,
+            )
+            delivery_success = delivery.sent if send_email else False
 
             execution_time = (datetime.now() - start).total_seconds()
 

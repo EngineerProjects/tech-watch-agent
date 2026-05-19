@@ -46,6 +46,8 @@ class NewsletterGenerateResponse(BaseModel):
     article_count: int
     status: str
     preview: str
+    email_sent: bool = False
+    delivery_message: Optional[str] = None
 
 class DeepResearchRequest(BaseModel):
     query: str

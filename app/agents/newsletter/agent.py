@@ -35,12 +35,11 @@ class NewsletterAgentConfig(AgentConfig):
     """Configuration specific to the newsletter agent.
 
     Extends AgentConfig with newsletter-specific settings like
-    max articles, topics, and delivery options.
+    max articles, topics, and editorial options.
     """
 
     max_articles_per_topic: int = 5
     topics: list[str] = field(default_factory=list)
-    send_email: bool = True
     include_opinions: bool = True
     newsletter_title: str = "Tech Watch Agent"
 
@@ -121,7 +120,6 @@ class NewsletterAgent(BaseAgent):
             input_data: Can be a dict with optional keys:
                 - 'topics': list of topics to cover
                 - 'articles': pre-fetched articles to use (bypasses fetching)
-                - 'send_email': whether to send email
 
         Returns:
             AgentResult containing the generated newsletter
@@ -130,12 +128,10 @@ class NewsletterAgent(BaseAgent):
 
         topics = None
         articles_input = None
-        send_email = self.config.send_email
 
         if isinstance(input_data, dict):
             topics = input_data.get("topics")
             articles_input = input_data.get("articles")
-            send_email = input_data.get("send_email", send_email)
         elif isinstance(input_data, str):
             topics = [input_data]
 
@@ -267,8 +263,8 @@ class NewsletterAgent(BaseAgent):
         """Generate a newsletter and optionally deliver it via email.
 
         This method is a convenience wrapper that handles both generation
-        and delivery in a single call. It uses the orchestrator for proper
-        delivery handling.
+        and delivery in a single call. Delivery stays outside the agent and
+        is delegated to the scheduler/orchestrator layer.
 
         Args:
             topics: Optional list of topics to cover
@@ -277,13 +273,23 @@ class NewsletterAgent(BaseAgent):
         Returns:
             NewsletterRunResult with the generated content and delivery status
         """
-        from app.scheduler.service import NewsletterOrchestrator
+        from app.scheduler.service import OrchestratorScheduler
+        from app.delivery.service import ReportDeliveryService
 
-        orchestrator = NewsletterOrchestrator(settings=self.settings)
-
-        return await orchestrator.generate_newsletter(
+        orchestrator = OrchestratorScheduler(mode="v1", settings=self.settings)
+        result = await orchestrator.run_task(
             topics=topics,
             send_email=send_email,
+        )
+
+        report = result.get("report", "")
+        subject = result.get("subject", self.config.newsletter_title)
+        prepared = ReportDeliveryService(self.settings).prepare(report, subject)
+
+        return NewsletterRunResult(
+            subject=subject,
+            markdown_content=report,
+            html_content=prepared.html_content,
         )
 
     def get_supported_topics(self) -> list[str]:

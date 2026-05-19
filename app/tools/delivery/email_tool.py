@@ -1,7 +1,7 @@
 """
 Email delivery tool.
 
-This tool wraps the GmailDeliveryClient to provide email sending
+This tool wraps the shared delivery service to provide email sending
 capabilities as a registered tool in the agent's tool registry.
 """
 
@@ -10,10 +10,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.tools.base import BaseTool, ToolCategory, ToolResult
-from app.delivery.gmail_client import GmailDeliveryClient
-from app.delivery.newsletter_renderer import NewsletterRenderer
 from app.config.settings import get_settings
 from app.core.logging import get_logger
+from app.delivery.service import ReportDeliveryService
 
 
 logger = get_logger(__name__)
@@ -106,18 +105,13 @@ class EmailTool(BaseTool):
             }
 
         try:
-            renderer = NewsletterRenderer(settings)
-            html_content = renderer.render_html(report, subject)
-            text_content = renderer.render_text(report)
-
             recipients = recipients_override or settings.recipient_emails
-
-            gmail = GmailDeliveryClient(settings)
-            sent = gmail.send_email(
+            delivery = ReportDeliveryService(settings).deliver(
+                report=report,
                 subject=subject,
-                body_html=html_content,
-                body_text=text_content,
+                send=True,
             )
+            sent = delivery.sent
 
             if sent:
                 logger.info("Email sent to %d recipients", len(recipients))
@@ -132,7 +126,7 @@ class EmailTool(BaseTool):
                     "error": None,
                     "metadata": {
                         "content_length": len(report),
-                        "html_length": len(html_content),
+                        "html_length": len(delivery.html_content),
                         "configured": True,
                     },
                 }
@@ -140,7 +134,7 @@ class EmailTool(BaseTool):
                 return {
                     "success": False,
                     "data": None,
-                    "error": "Failed to send email via Gmail",
+                    "error": delivery.message,
                     "metadata": {"configured": True},
                 }
 
@@ -210,19 +204,16 @@ class EmailPreviewTool(BaseTool):
 
         try:
             settings = get_settings()
-            renderer = NewsletterRenderer(settings)
-
-            html_content = renderer.render_html(report, subject)
-            text_content = renderer.render_text(report)
+            preview = ReportDeliveryService(settings).prepare(report, subject)
 
             return {
                 "success": True,
                 "data": {
                     "subject": subject,
-                    "html": html_content,
-                    "text": text_content,
-                    "html_length": len(html_content),
-                    "text_length": len(text_content),
+                    "html": preview.html_content,
+                    "text": preview.text_content,
+                    "html_length": len(preview.html_content),
+                    "text_length": len(preview.text_content),
                 },
                 "error": None,
                 "metadata": {

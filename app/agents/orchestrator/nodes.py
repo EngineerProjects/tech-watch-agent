@@ -264,7 +264,6 @@ class OrchestratorNodes:
         except Exception as exc:
             logger.warning("Health check failed: %s. Using default provider.", exc)
             return self._health_manager.active_provider
-        return self._llm_client
 
     async def _init_session_manager(self, state: OrchestratorState) -> None:
         """Initialize session manager for this session.
@@ -711,7 +710,7 @@ Rules:
                 logger.info("Step '%s' completed with %d results", step_id, len(data) if isinstance(data, list) else 1)
 
                 if isinstance(data, list):
-                    await self._persist_articles_from_step(data, step_name, tool_name or "deep_research")
+                    await self._persist_articles_from_step(data, step["name"], tool_name or "deep_research")
             else:
                 plan[current_idx]["status"] = StepStatus.FAILED
                 plan[current_idx]["error"] = error or "Unknown error"
@@ -1069,7 +1068,6 @@ Rules:
             agent = NewsletterAgent(
                 config=NewsletterAgentConfig(
                     topics=topics if topics else [task],
-                    send_email=False,
                     max_articles_per_topic=params.get("max_articles", 10),
                 )
             )
@@ -1381,32 +1379,25 @@ Rules:
             state["errors"] = state.get("errors", []) + ["No report to send"]
             return state
 
-        from app.delivery.newsletter_renderer import NewsletterRenderer
-        from app.delivery.gmail_client import GmailDeliveryClient
+        from app.delivery.service import ReportDeliveryService
         from app.config.settings import get_settings
 
         try:
             settings = get_settings()
-            renderer = NewsletterRenderer(settings)
-
             subject = self._extract_subject(report)
-            html_content = renderer.render_html(report, subject)
-            text_content = renderer.render_text(report)
+            delivery = ReportDeliveryService(settings)
+            result = delivery.deliver(
+                report=report,
+                subject=subject,
+                send=bool(state.get("send_email", True)),
+            )
 
-            state["email_result"] = f"Subject: {subject}\n\nReport prepared ({len(report)} chars)"
+            state["email_sent"] = result.sent
+            state["email_result"] = result.message
 
-            if settings.has_email_delivery and state.get("email_sent") is not True:
-                gmail = GmailDeliveryClient(settings)
-                success = gmail.send_email(
-                    subject=subject,
-                    body_html=html_content,
-                    body_text=text_content,
-                )
-                state["email_sent"] = success
-                state["email_result"] = f"Email sent: {success}"
-                logger.info("Email delivery: %s", "success" if success else "failed")
-            else:
-                state["email_sent"] = False
+            if not state.get("send_email", True):
+                logger.info("Email delivery skipped by orchestrator request")
+            elif not result.configured:
                 logger.info("Email delivery skipped (not configured)")
 
         except Exception as exc:

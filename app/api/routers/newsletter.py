@@ -8,6 +8,7 @@ from app.agents.newsletter.agent import create_newsletter_agent
 from app.config.settings import get_settings
 from app.api.models import NewsletterGenerateRequest, NewsletterGenerateResponse
 from app.core.logging import get_logger
+from app.delivery.service import ReportDeliveryService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/newsletter", tags=["Newsletter"])
@@ -15,9 +16,9 @@ router = APIRouter(prefix="/newsletter", tags=["Newsletter"])
 @router.post("/generate", response_model=NewsletterGenerateResponse)
 async def generate_newsletter(
     payload: NewsletterGenerateRequest,
-    background_tasks: BackgroundTasks,
+    _background_tasks: BackgroundTasks,
 ) -> NewsletterGenerateResponse:
-    """Generate a newsletter (async or sync)."""
+    """Generate newsletter content and optionally deliver it."""
     try:
         resolved_settings = get_settings()
         agent = create_newsletter_agent(resolved_settings)
@@ -25,7 +26,6 @@ async def generate_newsletter(
         # Run synchronously for now (background_tasks not fully implemented)
         result = await agent.execute({
             "topics": payload.topics,
-            "send_email": payload.send_email,
         })
 
         if not result.success:
@@ -33,17 +33,25 @@ async def generate_newsletter(
 
         output = result.output
         newsletter = output.get("newsletter", "")
+        article_count = result.metadata.get("article_count", 0)
 
         # Get first line as subject
         subject = newsletter.split("\n")[0] if newsletter else "Tech Watch Newsletter"
         subject = subject.replace("#", "").strip()
+        delivery = ReportDeliveryService(resolved_settings).deliver(
+            report=newsletter,
+            subject=subject,
+            send=payload.send_email,
+        )
 
         return NewsletterGenerateResponse(
             run_id=str(result.session_id) if result.session_id else str(uuid.uuid4()),
             subject=subject,
-            article_count=output.get("article_count", 0),
+            article_count=article_count,
             status="completed",
             preview=newsletter[:500],
+            email_sent=delivery.sent,
+            delivery_message=delivery.message,
         )
 
     except Exception as exc:

@@ -6,7 +6,6 @@ ensuring proper request handling, response formatting, and error cases.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
 
 from fastapi.testclient import TestClient
