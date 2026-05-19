@@ -1,0 +1,13 @@
+{% if sessions %}
+{% for s in sessions %}
+<tr class="clickable" onclick="location.href='/ui/sessions/{{ s.id }}'">
+  <td>{{ s.brief }}</td>
+  <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
+  <td>{{ s.phase }}</td>
+  <td>{{ s.created_at }}</td>
+  <td>{{ s.completed_at }}</td>
+</tr>
+{% endfor %}
+{% else %}
+<tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">Aucune session.</td></tr>
+{% endif %}

@@ -1,0 +1,21 @@
+<div class="stats-grid">
+  <article class="stat-card {{ 'warn' if not stats.db_ok else '' }}">
+    <span class="stat-value">{{ stats.sessions }}</span>
+    <span class="stat-label">Sessions</span>
+  </article>
+  <article class="stat-card">
+    <span class="stat-value">{{ stats.completed_sessions }}</span>
+    <span class="stat-label">Complétées</span>
+  </article>
+  <article class="stat-card">
+    <span class="stat-value">{{ stats.articles }}</span>
+    <span class="stat-label">Articles stockés</span>
+  </article>
+  <article class="stat-card">
+    <span class="stat-value">{{ stats.newsletter_runs }}</span>
+    <span class="stat-label">Newsletter runs</span>
+  </article>
+</div>
+{% if not stats.db_ok %}
+<p style="color:#f87171;font-size:.85rem">⚠ Base de données inaccessible — les statistiques ne sont pas disponibles.</p>
+{% endif %}

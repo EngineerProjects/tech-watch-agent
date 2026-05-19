@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Sessions — Tech Watch Agent{% endblock %}
+
+{% block content %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
+  <h2 style="margin:0">Sessions de recherche</h2>
+  <button class="secondary outline"
+          hx-get="/ui/_sessions?status={{ current_status if current_status != 'all' else '' }}"
+          hx-target="#session-tbody"
+          hx-swap="innerHTML"
+          style="font-size:.85rem;padding:.4rem .9rem">
+    ↻ Rafraîchir
+  </button>
+</div>
+
+<!-- Filters -->
+<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
+  {% for label, val in [('Toutes', ''), ('En cours', 'running'), ('Complétées', 'completed'), ('Échouées', 'failed'), ('Créées', 'created')] %}
+  <a href="/ui/sessions{% if val %}?status={{ val }}{% endif %}"
+     role="button"
+     class="{{ '' if (current_status == val or (current_status == 'all' and val == '')) else 'secondary outline' }}"
+     style="font-size:.82rem;padding:.35rem .9rem">
+    {{ label }}
+  </a>
+  {% endfor %}
+</div>
+
+<article style="padding:0;overflow:hidden">
+  <table style="margin:0">
+    <thead>
+      <tr>
+        <th>Brief</th>
+        <th>Status</th>
+        <th>Phase</th>
+        <th>Créée</th>
+        <th>Terminée</th>
+      </tr>
+    </thead>
+    <tbody id="session-tbody">
+      {% include "partials/session_rows.html" %}
+    </tbody>
+  </table>
+</article>
+
+<p class="muted" style="font-size:.8rem;margin-top:.5rem">{{ sessions|length }} session(s) affichée(s)</p>
+{% endblock %}

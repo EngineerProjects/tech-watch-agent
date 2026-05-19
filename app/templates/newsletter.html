@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Newsletter — Tech Watch Agent{% endblock %}
+
+{% block content %}
+<h2>Newsletter</h2>
+
+<div class="two-col" style="margin-bottom:2rem">
+
+  <!-- Generate form -->
+  <article>
+    <header><strong>📧 Générer une newsletter</strong></header>
+    <form hx-post="/ui/_newsletter"
+          hx-target="#newsletter-result"
+          hx-swap="innerHTML"
+          hx-indicator="#nl-spinner">
+      <label>
+        Topics <small class="muted">(séparés par des virgules)</small>
+        <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM, agents…">
+      </label>
+      <label>
+        <input type="checkbox" name="send_email" value="true" role="switch">
+        Envoyer par email après génération
+      </label>
+      <div style="display:flex;align-items:center;gap:1rem">
+        <button type="submit" hx-disabled-elt="this">📧 Générer</button>
+        <span id="nl-spinner" class="htmx-indicator muted">
+          <span class="spinner"></span> Génération en cours…
+        </span>
+      </div>
+    </form>
+
+    <div id="newsletter-result"></div>
+  </article>
+
+  <!-- Stats -->
+  <article>
+    <header><strong>📊 Statistiques</strong></header>
+    {% if history %}
+    {% set delivered = history | selectattr('delivery_success', 'equalto', true) | list %}
+    <dl>
+      <div style="display:flex;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid var(--pico-muted-border-color)">
+        <dt class="muted">Total runs</dt><dd><strong>{{ history|length }}</strong></dd>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid var(--pico-muted-border-color)">
+        <dt class="muted">Emails envoyés</dt><dd><strong>{{ delivered|length }}</strong></dd>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:.5rem 0">
+        <dt class="muted">Taux de livraison</dt>
+        <dd><strong>{{ ((delivered|length / history|length) * 100)|round|int }}%</strong></dd>
+      </div>
+    </dl>
+    {% else %}
+    <p class="muted">Aucune donnée disponible.</p>
+    {% endif %}
+  </article>
+
+</div>
+
+<!-- History table -->
+<article style="padding:0;overflow:hidden">
+  <table style="margin:0">
+    <thead>
+      <tr>
+        <th>Sujet</th>
+        <th>Status</th>
+        <th>Articles</th>
+        <th>Email</th>
+        <th>Date</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if history %}
+      {% for r in history %}
+      <tr>
+        <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.subject }}</td>
+        <td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td>
+        <td>{{ r.articles_count }}</td>
+        <td>
+          {% if r.delivery_success %}
+          <span class="badge badge-true">✓ envoyé</span>
+          {% else %}
+          <span class="badge badge-false">non envoyé</span>
+          {% endif %}
+        </td>
+        <td><small class="muted">{{ r.started_at }}</small></td>
+      </tr>
+      {% endfor %}
+      {% else %}
+      <tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">Aucun historique disponible.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</article>
+{% if history %}
+<p class="muted" style="font-size:.8rem;margin-top:.5rem">{{ history|length }} run(s) affiché(s)</p>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Tech Watch Agent{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://unpkg.com/htmx.org@2.0.3" defer></script>
+  <style>
+    :root { --pico-font-size: 15px; }
+
+    header.top-nav {
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      margin-bottom: 2rem;
+      padding: .75rem 0;
+    }
+    header.top-nav nav ul { margin: 0; padding: 0; }
+    header.top-nav nav a { text-decoration: none; color: var(--pico-muted-color); }
+    header.top-nav nav a:hover { color: var(--pico-color); }
+    header.top-nav nav a.active { color: var(--pico-primary); font-weight: 600; }
+    header.top-nav .brand { font-weight: 700; color: var(--pico-color); font-size: 1.05rem; }
+
+    /* Status badges */
+    .badge {
+      display: inline-block;
+      padding: .15rem .55rem;
+      border-radius: 1rem;
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .badge-completed  { background: rgba(74,222,128,.15); color: #4ade80; border: 1px solid rgba(74,222,128,.3); }
+    .badge-running    { background: rgba(96,165,250,.15); color: #60a5fa; border: 1px solid rgba(96,165,250,.3); }
+    .badge-failed     { background: rgba(248,113,113,.15); color: #f87171; border: 1px solid rgba(248,113,113,.3); }
+    .badge-created    { background: rgba(156,163,175,.1); color: #9ca3af; border: 1px solid rgba(156,163,175,.2); }
+    .badge-pending    { background: rgba(156,163,175,.1); color: #9ca3af; border: 1px solid rgba(156,163,175,.2); }
+    .badge-done       { background: rgba(74,222,128,.15); color: #4ade80; border: 1px solid rgba(74,222,128,.3); }
+    .badge-skipped    { background: rgba(251,191,36,.1); color: #fbbf24; border: 1px solid rgba(251,191,36,.25); }
+    .badge-true       { background: rgba(74,222,128,.15); color: #4ade80; border: 1px solid rgba(74,222,128,.3); }
+    .badge-false      { background: rgba(156,163,175,.1); color: #9ca3af; border: 1px solid rgba(156,163,175,.2); }
+
+    /* Stats grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+    .stat-card { text-align: center; padding: 1.25rem 1rem; }
+    .stat-value { font-size: 2.2rem; font-weight: 700; color: var(--pico-primary); display: block; }
+    .stat-label { font-size: .75rem; color: var(--pico-muted-color); text-transform: uppercase; letter-spacing: .06em; margin-top: .25rem; }
+    .stat-card.warn .stat-value { color: #f87171; }
+
+    /* Two-column layout */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    @media (max-width: 768px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* HTMX loading */
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator { display: inline-flex; align-items: center; gap: .4rem; }
+
+    .spinner {
+      display: inline-block;
+      width: 1em; height: 1em;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Result boxes */
+    .result-box {
+      border-left: 3px solid var(--pico-primary);
+      padding: .75rem 1rem;
+      margin-top: 1rem;
+      background: rgba(255,255,255,.03);
+      border-radius: 0 .5rem .5rem 0;
+    }
+    .result-box.success { border-left-color: #4ade80; }
+    .result-box.error   { border-left-color: #f87171; }
+
+    /* Report content */
+    .report-content { line-height: 1.75; }
+    .report-content h1, .report-content h2, .report-content h3 {
+      border-bottom: 1px solid var(--pico-muted-border-color);
+      padding-bottom: .3rem;
+      margin-top: 1.5rem;
+    }
+    .report-content pre { font-size: .82rem; }
+    .report-content table { font-size: .9rem; }
+
+    /* Plan steps table */
+    .step-tool { font-size: .75rem; color: var(--pico-muted-color); font-family: monospace; }
+    .step-error { font-size: .8rem; color: #f87171; margin-top: .2rem; }
+
+    /* Clickable rows */
+    tr.clickable { cursor: pointer; transition: background .1s; }
+    tr.clickable:hover { background: rgba(255,255,255,.04); }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1.5rem; }
+    .tab-btn {
+      background: none; border: none; border-bottom: 2px solid transparent;
+      padding: .6rem 1.25rem; margin-bottom: -1px; cursor: pointer;
+      color: var(--pico-muted-color); font-size: .9rem; border-radius: 0;
+    }
+    .tab-btn:hover { color: var(--pico-color); }
+    .tab-btn.active { color: var(--pico-primary); border-bottom-color: var(--pico-primary); font-weight: 600; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Misc */
+    .muted { color: var(--pico-muted-color); }
+    .section-title { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: var(--pico-muted-color); text-transform: uppercase; letter-spacing: .05em; }
+    small.meta { color: var(--pico-muted-color); font-size: .8rem; }
+  </style>
+</head>
+<body>
+  <header class="container-fluid top-nav">
+    <nav>
+      <ul>
+        <li><span class="brand">🔭 Tech Watch Agent</span></li>
+      </ul>
+      <ul>
+        <li><a href="/ui" class="{{ 'active' if active == 'home' else '' }}">Dashboard</a></li>
+        <li><a href="/ui/sessions" class="{{ 'active' if active == 'sessions' else '' }}">Sessions</a></li>
+        <li><a href="/ui/newsletter" class="{{ 'active' if active == 'newsletter' else '' }}">Newsletter</a></li>
+        <li><a href="/docs" target="_blank" class="muted" style="font-size:.85rem">API →</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="container-fluid" style="margin-top:3rem;padding:1rem 2rem;border-top:1px solid var(--pico-muted-border-color)">
+    <small class="muted">Tech Watch Agent — usage interne</small>
+  </footer>
+
+  <script>
+    // Simple tab system
+    function switchTab(groupId, tabId) {
+      document.querySelectorAll('[data-tab-group="' + groupId + '"]').forEach(el => {
+        el.classList.toggle('active', el.dataset.tabId === tabId);
+      });
+      document.querySelectorAll('[data-panel-group="' + groupId + '"]').forEach(el => {
+        el.classList.toggle('active', el.dataset.panelId === tabId);
+      });
+    }
+  </script>
+</body>
+</html>

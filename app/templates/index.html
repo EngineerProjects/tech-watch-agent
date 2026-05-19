@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Tech Watch Agent{% endblock %}
+
+{% block content %}
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:1.5rem">
+  <h2 style="margin:0">Dashboard</h2>
+  <small class="muted" id="stats-refresh">
+    <span hx-get="/ui/_stats" hx-trigger="every 60s" hx-target="#stats-container" hx-swap="innerHTML"></span>
+    Refresh auto toutes les 60s
+  </small>
+</div>
+
+<!-- Stats -->
+<div id="stats-container">
+  {% include "partials/stats.html" %}
+</div>
+
+<!-- Main content: Launch + Recent sessions -->
+<div class="two-col">
+
+  <!-- Launch form -->
+  <article>
+    <header>
+      <strong>▶ Lancer une analyse</strong>
+    </header>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab-group="launch" data-tab-id="v2"
+              onclick="switchTab('launch', 'v2')">
+        Orchestrateur V2
+      </button>
+      <button class="tab-btn" data-tab-group="launch" data-tab-id="v1"
+              onclick="switchTab('launch', 'v1')">
+        Newsletter V1
+      </button>
+    </div>
+
+    <!-- V2 tab -->
+    <div class="tab-panel active" data-panel-group="launch" data-panel-id="v2">
+      <form hx-post="/ui/_launch"
+            hx-target="#run-result"
+            hx-swap="innerHTML"
+            hx-indicator="#launch-spinner">
+        <input type="hidden" name="mode" value="v2">
+
+        <label>
+          Tâche de recherche
+          <input type="text" name="task" value="Weekly tech watch" required>
+        </label>
+        <label>
+          Topics <small class="muted">(séparés par des virgules)</small>
+          <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM, agents…">
+        </label>
+        <label>
+          <input type="checkbox" name="send_email" value="true" role="switch">
+          Envoyer par email après génération
+        </label>
+
+        <div style="display:flex;align-items:center;gap:1rem">
+          <button type="submit" hx-disabled-elt="this">▶ Lancer</button>
+          <span id="launch-spinner" class="htmx-indicator muted">
+            <span class="spinner"></span> En cours… (peut prendre plusieurs minutes)
+          </span>
+        </div>
+      </form>
+    </div>
+
+    <!-- V1 tab -->
+    <div class="tab-panel" data-panel-group="launch" data-panel-id="v1">
+      <form hx-post="/ui/_newsletter"
+            hx-target="#run-result"
+            hx-swap="innerHTML"
+            hx-indicator="#launch-spinner">
+        <label>
+          Topics <small class="muted">(séparés par des virgules)</small>
+          <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM…">
+        </label>
+        <label>
+          <input type="checkbox" name="send_email" value="true" role="switch">
+          Envoyer par email
+        </label>
+        <div style="display:flex;align-items:center;gap:1rem">
+          <button type="submit" class="secondary" hx-disabled-elt="this">📧 Générer newsletter</button>
+          <span class="htmx-indicator muted">
+            <span class="spinner"></span> Génération en cours…
+          </span>
+        </div>
+      </form>
+    </div>
+  </article>
+
+  <!-- Recent sessions -->
+  <article>
+    <header style="display:flex;justify-content:space-between;align-items:center">
+      <strong>🕐 Sessions récentes</strong>
+      <a href="/ui/sessions" style="font-size:.85rem">Voir tout →</a>
+    </header>
+    {% if sessions %}
+    <table>
+      <thead>
+        <tr>
+          <th>Brief</th>
+          <th>Status</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sessions %}
+        <tr class="clickable" onclick="location.href='/ui/sessions/{{ s.id }}'">
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.brief }}</td>
+          <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
+          <td><small class="muted">{{ s.created_at }}</small></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted" style="text-align:center;padding:2rem 0">
+      Aucune session pour l'instant.<br>
+      <small>Lancez votre première analyse ci-contre.</small>
+    </p>
+    {% endif %}
+  </article>
+
+</div>
+
+<!-- Run result (filled by HTMX) -->
+<div id="run-result"></div>
+
+{% endblock %}

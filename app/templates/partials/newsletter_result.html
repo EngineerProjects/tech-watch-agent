@@ -1,0 +1,29 @@
+{% if error %}
+<div class="result-box error">
+  <strong>✗ Erreur</strong>
+  <p style="margin:.4rem 0 0;font-size:.85rem">{{ error }}</p>
+</div>
+{% elif result and result.success %}
+<div class="result-box success">
+  <strong>✓ Newsletter générée</strong>
+  <br><small class="meta">
+    {{ result.metadata.get('article_count', 0) }} articles &nbsp;|&nbsp;
+    Email : {{ '✓ envoyé' if email_sent else 'non envoyé' }}
+    {% if result.output.get('subject') %} &nbsp;|&nbsp; {{ result.output.subject }}{% endif %}
+  </small>
+  {% if result.output.get('newsletter') %}
+  <details style="margin-top:.75rem">
+    <summary>Aperçu</summary>
+    <div class="report-content" style="max-height:400px;overflow-y:auto;margin-top:.5rem;font-size:.9rem">
+      {{ result.output.newsletter[:2000] | e | replace('\n', '<br>') | safe }}
+      {% if result.output.newsletter|length > 2000 %}…{% endif %}
+    </div>
+  </details>
+  {% endif %}
+</div>
+{% elif result %}
+<div class="result-box error">
+  <strong>✗ Échec</strong>
+  {% if result.errors %}<p style="font-size:.85rem">{{ result.errors[0] }}</p>{% endif %}
+</div>
+{% endif %}

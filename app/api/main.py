@@ -11,6 +11,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from app.config.settings import Settings, get_settings
 from app.db.base import init_db, close_db
@@ -30,6 +31,7 @@ from app.api.routers import (
     tools_router,
     llm_router,
 )
+from app.dashboard import dashboard_router
 
 
 logger = get_logger(__name__)
@@ -192,6 +194,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(tools_router)
     app.include_router(llm_router)
+    app.include_router(dashboard_router)
+
+    @app.get("/", include_in_schema=False)
+    async def root_redirect():
+        return RedirectResponse(url="/ui")
 
     return app
 

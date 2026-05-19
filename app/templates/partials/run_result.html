@@ -1,0 +1,30 @@
+{% if result and result.get('success') %}
+<div class="result-box success">
+  <strong>✓ Run terminé</strong> — <em>{{ task }}</em>
+  <br><small class="meta">
+    {% if result.get('subject') %}Rapport : <strong>{{ result.subject }}</strong> &nbsp;|&nbsp; {% endif %}
+    {% if result.get('execution_time') %}Durée : {{ "%.1f"|format(result.execution_time) }}s &nbsp;|&nbsp; {% endif %}
+    Email : {{ '✓ envoyé' if result.get('email_sent') else 'non envoyé' }}
+    {% if result.get('research_results') %} &nbsp;|&nbsp; {{ result.research_results|length }} sources{% endif %}
+  </small>
+  {% if result.get('report') %}
+  <details style="margin-top:.75rem">
+    <summary>Voir le rapport</summary>
+    <div class="report-content" style="max-height:500px;overflow-y:auto;margin-top:.5rem">
+      {{ result.report | e | replace('\n', '<br>') | safe }}
+    </div>
+  </details>
+  {% endif %}
+</div>
+{% elif result %}
+<div class="result-box error">
+  <strong>✗ Échec</strong>
+  {% if result.get('errors') %}
+  <ul style="margin:.5rem 0 0 1rem;font-size:.85rem">
+    {% for err in result.errors %}<li>{{ err }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</div>
+{% else %}
+<div class="result-box error"><strong>✗ Erreur inattendue</strong></div>
+{% endif %}

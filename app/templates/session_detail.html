@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Session {{ s.id[:8] }} — Tech Watch Agent{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div style="margin-bottom:1.5rem">
+  <a href="/ui/sessions" class="muted" style="font-size:.85rem;text-decoration:none">← Retour aux sessions</a>
+</div>
+
+<div style="display:flex;align-items:flex-start;gap:1rem;margin-bottom:2rem;flex-wrap:wrap">
+  <div style="flex:1;min-width:0">
+    <h2 style="margin:0 0 .4rem">{{ s.brief }}</h2>
+    <small class="meta">
+      ID : <code>{{ s.id }}</code> &nbsp;|&nbsp;
+      Créée : {{ s.created_at }} &nbsp;|&nbsp;
+      Terminée : {{ s.completed_at }} &nbsp;|&nbsp;
+      Plan v{{ s.plan_version }} &nbsp;|&nbsp;
+      {{ s.iterations }} itération(s)
+    </small>
+  </div>
+  <div>
+    <span class="badge badge-{{ s.status }}" style="font-size:.85rem;padding:.25rem .75rem">
+      {{ s.status }}
+    </span>
+    &nbsp;
+    <span class="badge badge-created" style="font-size:.85rem;padding:.25rem .75rem">
+      {{ s.phase }}
+    </span>
+  </div>
+</div>
+
+<!-- Plan d'exécution -->
+{% if s.plan %}
+<article>
+  <header><strong>📋 Plan d'exécution</strong> <small class="muted">({{ s.plan|length }} étapes)</small></header>
+  <table style="font-size:.88rem">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Étape</th>
+        <th>Type</th>
+        <th>Outil</th>
+        <th>Status</th>
+        <th>Début</th>
+        <th>Fin</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for step in s.plan %}
+      {% set status = step.get('status', 'pending') %}
+      {% if status and status.value is defined %}{% set status = status.value %}{% endif %}
+      <tr>
+        <td class="muted">{{ loop.index }}</td>
+        <td>
+          <strong>{{ step.get('name', '—') }}</strong>
+          {% if step.get('description') %}
+          <br><small class="muted">{{ step.description[:80] }}{% if step.description|length > 80 %}…{% endif %}</small>
+          {% endif %}
+          {% if step.get('error') %}
+          <div class="step-error">✗ {{ step.error[:120] }}</div>
+          {% endif %}
+        </td>
+        <td><code style="font-size:.75rem">{{ step.get('step_type', '—') }}</code></td>
+        <td><span class="step-tool">{{ step.get('tool_name', '—') }}</span></td>
+        <td><span class="badge badge-{{ status }}">{{ status }}</span></td>
+        <td><small class="muted">{{ step.get('started_at', '—')[:16] if step.get('started_at') else '—' }}</small></td>
+        <td><small class="muted">{{ step.get('completed_at', '—')[:16] if step.get('completed_at') else '—' }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</article>
+{% endif %}
+
+<!-- Résultats de recherche -->
+{% if s.research_results %}
+<article style="margin-top:1.5rem">
+  <header>
+    <strong>🔍 Résultats de recherche</strong>
+    <small class="muted">({{ s.research_results|length }} source(s))</small>
+  </header>
+  {% for r in s.research_results %}
+  <details style="margin-bottom:.5rem">
+    <summary>
+      <strong>{{ r.get('step_name', r.get('tool', '?')) }}</strong>
+      <small class="muted"> via {{ r.get('tool', '—') }} — {{ r.get('count', 0) }} résultat(s)</small>
+    </summary>
+    <div style="padding:.75rem;font-size:.85rem">
+      {% set data = r.get('data', []) %}
+      {% if data is iterable and data is not string %}
+        {% for item in data[:5] %}
+          {% if item is mapping %}
+          <div style="border-left:2px solid var(--pico-muted-border-color);padding-left:.75rem;margin-bottom:.5rem">
+            <strong>{{ item.get('title', item.get('name', '—')) }}</strong>
+            {% if item.get('url') %}<br><a href="{{ item.url }}" target="_blank" style="font-size:.8rem">{{ item.url[:80] }}</a>{% endif %}
+            {% if item.get('summary') or item.get('description') %}
+            <br><small class="muted">{{ (item.get('summary') or item.get('description', ''))[:200] }}</small>
+            {% endif %}
+          </div>
+          {% else %}
+          <div class="muted">{{ item|string|truncate(200) }}</div>
+          {% endif %}
+        {% endfor %}
+        {% if data|length > 5 %}<small class="muted">… et {{ data|length - 5 }} autres</small>{% endif %}
+      {% else %}
+        <pre style="font-size:.8rem;white-space:pre-wrap">{{ data|string|truncate(500) }}</pre>
+      {% endif %}
+    </div>
+  </details>
+  {% endfor %}
+</article>
+{% endif %}
+
+<!-- Rapport final -->
+{% if s.has_report %}
+<article style="margin-top:1.5rem">
+  <header>
+    <strong>📄 Rapport final</strong>
+  </header>
+  <div class="report-content">
+    {{ s.report_html | safe }}
+  </div>
+</article>
+{% else %}
+<article style="margin-top:1.5rem;text-align:center;padding:2rem">
+  <p class="muted">Pas encore de rapport final pour cette session.</p>
+</article>
+{% endif %}
+
+{% endblock %}
