@@ -1,31 +1,9 @@
 services:
-  # PostgreSQL database with pgvector extension
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: techwatch
-      POSTGRES_INITDB_ARGS: "-c shared_preload_libraries=vector"
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-    networks:
-      - tech-watch-network
-
   # Redis for caching and task queue
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -38,6 +16,7 @@ services:
       - tech-watch-network
 
   # FastAPI application server
+  # DB: devinfra-postgres-1 at host port 5432 (user: dev / devpassword / db: techwatch)
   api:
     build:
       context: ..
@@ -49,12 +28,10 @@ services:
       - path: ../.env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
-      DATABASE_SYNC_URL: postgresql://postgres:postgres@postgres:5432/techwatch
+      DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
+      DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
       REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -66,7 +43,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 40s
     command: >
       sh -c "
         echo 'Running database migrations...' &&
@@ -80,7 +57,7 @@ services:
     networks:
       - tech-watch-network
 
-  # One-time newsletter generation
+  # One-time newsletter generation (run with: make dev-once)
   once:
     build:
       context: ..
@@ -90,12 +67,10 @@ services:
       - path: ../.env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
-      DATABASE_SYNC_URL: postgresql://postgres:postgres@postgres:5432/techwatch
+      DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
+      DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
       REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -112,7 +87,7 @@ services:
     networks:
       - tech-watch-network
 
-  # Scheduled newsletter generation
+  # Scheduled newsletter generation (run with: make dev-scheduler)
   scheduler:
     build:
       context: ..
@@ -122,12 +97,10 @@ services:
       - path: ../.env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/techwatch
-      DATABASE_SYNC_URL: postgresql://postgres:postgres@postgres:5432/techwatch
+      DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
+      DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
       REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -146,7 +119,6 @@ services:
       - tech-watch-network
 
 volumes:
-  postgres_data:
   redis_data:
   logs_data:
 
