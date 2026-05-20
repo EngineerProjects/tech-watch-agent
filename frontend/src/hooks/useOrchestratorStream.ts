@@ -1,77 +1,102 @@
-import { useState, useEffect } from 'react';
-import type { PlanStep, Article } from '../types';
+import { useState, useEffect, useRef } from 'react';
+import type { PlanStep } from '../types';
 
-export interface StreamEvent {
-  event: string;
-  data: any;
+export interface StreamArticle {
+  title: string;
+  url: string;
+  source: string;
+  published_date?: string;
+  summary?: string;
+  relevance_score?: number;
 }
 
 export const useOrchestratorStream = (url: string | null) => {
   const [report, setReport] = useState('');
   const [plan, setPlan] = useState<PlanStep[]>([]);
-  const [articles, setArticles] = useState<Article[]>([]);
+  const [articles, setArticles] = useState<StreamArticle[]>([]);
   const [phase, setPhase] = useState('idle');
   const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     if (!url) return;
 
+    // Reset
     setReport('');
     setPlan([]);
     setArticles([]);
     setPhase('initializing');
     setStatus('running');
     setError(null);
+    setSessionId(null);
 
-    const eventSource = new EventSource(url);
+    const es = new EventSource(url);
+    esRef.current = es;
 
-    eventSource.addEventListener('session_created', (e) => {
-      console.log('Session created:', JSON.parse(e.data));
-    });
-
-    eventSource.addEventListener('phase_transition', (e) => {
+    es.addEventListener('session_created', (e) => {
       const data = JSON.parse(e.data);
-      setPhase(data.phase);
+      setSessionId(data.session_id ?? null);
     });
 
-    eventSource.addEventListener('plan_updated', (e) => {
+    es.addEventListener('phase_transition', (e) => {
       const data = JSON.parse(e.data);
-      setPlan(data.plan);
+      setPhase(data.phase ?? '');
     });
 
-    eventSource.addEventListener('report_chunk', (e) => {
+    es.addEventListener('plan_updated', (e) => {
       const data = JSON.parse(e.data);
-      setReport((prev) => prev + data.chunk);
+      if (Array.isArray(data.plan)) setPlan(data.plan);
     });
 
-    eventSource.addEventListener('research_result', () => {
-      // Backend currently sends minimal research_result info in SSE
+    es.addEventListener('research_result', (e) => {
+      const data = JSON.parse(e.data);
+      const incoming: StreamArticle[] = (data.articles ?? []).filter((a: StreamArticle) => a.url);
+      if (incoming.length > 0) {
+        setArticles(prev => {
+          const existingUrls = new Set(prev.map(a => a.url));
+          const newOnes = incoming.filter(a => !existingUrls.has(a.url));
+          return [...prev, ...newOnes];
+        });
+      }
     });
 
-    eventSource.addEventListener('session_completed', () => {
+    es.addEventListener('report_chunk', (e) => {
+      const data = JSON.parse(e.data);
+      if (data.chunk) setReport(prev => prev + data.chunk);
+    });
+
+    es.addEventListener('report_completed', () => {
+      // report is fully assembled via chunks; mark phase done
+      setPhase('completed');
+    });
+
+    es.addEventListener('session_completed', () => {
       setStatus('completed');
-      eventSource.close();
+      setPhase('done');
+      es.close();
     });
 
-    eventSource.addEventListener('session_failed', (e) => {
+    es.addEventListener('session_failed', (e) => {
       const data = JSON.parse(e.data);
-      setError(data.error);
+      setError(data.error ?? 'Erreur inconnue');
       setStatus('failed');
-      eventSource.close();
+      es.close();
     });
 
-    eventSource.onerror = (e) => {
-      console.error('SSE Error:', e);
-      setError('Connection lost');
-      setStatus('failed');
-      eventSource.close();
+    es.onerror = () => {
+      // Only treat as error if we never completed
+      setStatus(prev => prev === 'running' ? 'failed' : prev);
+      setError(prev => prev ?? 'Connexion SSE perdue');
+      es.close();
     };
 
     return () => {
-      eventSource.close();
+      es.close();
+      esRef.current = null;
     };
   }, [url]);
 
-  return { report, plan, articles, phase, status, error };
+  return { report, plan, articles, phase, status, error, sessionId };
 };

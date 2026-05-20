@@ -107,12 +107,22 @@ const SourceCard = ({ result }: { result: any }) => {
 };
 
 export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl, sessionId }) => {
-  const { report: streamedReport, plan: streamedPlan } = useOrchestratorStream(streamUrl || null);
+  const {
+    report: streamedReport,
+    plan: streamedPlan,
+    articles: streamedArticles,
+    phase,
+    status,
+    error: streamError,
+    sessionId: streamedSessionId,
+  } = useOrchestratorStream(streamUrl || null);
+
   const [activeTab, setActiveTab] = useState<Tab>('report');
   const [session, setSession] = useState<ResearchSession | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingSession, setLoadingSession] = useState(false);
 
+  // Load session from DB when given a sessionId prop (history view)
   useEffect(() => {
     if (!sessionId || streamUrl) return;
     setLoadingSession(true);
@@ -123,13 +133,44 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
       .finally(() => setLoadingSession(false));
   }, [sessionId, streamUrl]);
 
-  const planSteps: PlanStep[] = streamedPlan?.length
-    ? streamedPlan
-    : (session?.plan ?? []);
+  // Auto-reload from DB when stream completes to get full report + sources
+  useEffect(() => {
+    const resolvedId = streamedSessionId || sessionId;
+    if (status !== 'completed' || !resolvedId) return;
+    const timer = setTimeout(() => {
+      setLoadingSession(true);
+      ApiService.getSession(resolvedId)
+        .then(s => setSession(s))
+        .catch(() => {})
+        .finally(() => setLoadingSession(false));
+    }, 1500); // small delay for DB write to settle
+    return () => clearTimeout(timer);
+  }, [status, streamedSessionId, sessionId]);
 
+  const planSteps: PlanStep[] = streamedPlan?.length ? streamedPlan : (session?.plan ?? []);
   const reportContent = streamedReport || session?.final_report || null;
-  const sources = session?.research_results ?? [];
+
+  // During streaming: show live articles; after completion: show full DB results
+  const sources: any[] = session?.research_results?.length
+    ? session.research_results
+    : streamedArticles;
+
   const title = session?.research_brief || 'Session en cours...';
+  const isStreaming = !!streamUrl && status === 'running';
+
+  // Phase label for the live indicator
+  const phaseLabels: Record<string, string> = {
+    idle: 'En attente',
+    initializing: 'Initialisation…',
+    planner: 'Génération du plan…',
+    dispatcher: 'Recherche en cours…',
+    dispatcher_parallel: 'Recherche parallèle…',
+    synthesizer: 'Synthèse du rapport…',
+    mailer: 'Envoi par email…',
+    completed: 'Terminé',
+    done: 'Terminé',
+    failed: 'Échec',
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: 'var(--bg-primary)' }}>
@@ -144,11 +185,27 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
         justifyContent: 'space-between',
         flexShrink: 0
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.9rem' }}>
-          <span style={{ color: 'var(--text-muted)' }}>Sessions</span>
-          <ChevronRight size={14} color="var(--text-muted)" />
-          <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{title}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.9rem', minWidth: 0 }}>
+          <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>Sessions</span>
+          <ChevronRight size={14} color="var(--text-muted)" style={{ flexShrink: 0 }} />
+          <span style={{ color: 'var(--text-primary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
         </div>
+        {isStreaming && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: 'var(--status-running)', backgroundColor: 'var(--status-running-bg)', padding: '4px 12px', borderRadius: '20px', border: '1px solid rgba(59,130,246,0.2)' }}>
+            <div className="animate-pulse" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: 'var(--status-running)', flexShrink: 0 }} />
+            {phaseLabels[phase] ?? phase}
+          </div>
+        )}
+        {status === 'completed' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: 'var(--status-success)', backgroundColor: 'var(--status-success-bg)', padding: '4px 12px', borderRadius: '20px' }}>
+            <CheckCircle2 size={13} /> Terminé
+          </div>
+        )}
+        {streamError && (
+          <div style={{ fontSize: '0.82rem', color: 'var(--status-error)', backgroundColor: 'var(--status-error-bg)', padding: '4px 12px', borderRadius: '20px' }}>
+            {streamError}
+          </div>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
           {reportContent && (
             <button
@@ -182,20 +239,18 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
           gap: '24px'
         }}>
           <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Plan d'exécution</h2>
-          {loadingSession ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)' }}>
-              <Loader2 size={16} className="animate-spin" /> Chargement...
-            </div>
-          ) : planSteps.length > 0 ? (
+          {planSteps.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column' }}>
               {planSteps.map((step, idx) => (
                 <PlanStepRow key={step.step_id || idx} step={step} index={idx} total={planSteps.length} />
               ))}
             </div>
+          ) : isStreaming ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+              <Loader2 size={14} className="animate-spin" /> En attente du plan…
+            </div>
           ) : (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-              {streamUrl ? 'En attente du plan...' : 'Aucun plan disponible.'}
-            </p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Aucun plan disponible.</p>
           )}
         </aside>
 
@@ -241,12 +296,20 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
                     </div>
                   </div>
                 ) : reportContent ? (
-                  <ReactMarkdown>{reportContent}</ReactMarkdown>
+                  <>
+                    <ReactMarkdown>{reportContent}</ReactMarkdown>
+                    {isStreaming && (
+                      <span style={{ display: 'inline-block', width: '2px', height: '1.2em', backgroundColor: 'var(--accent-primary)', verticalAlign: 'text-bottom', marginLeft: '2px', animation: 'blink 1s step-end infinite' }} />
+                    )}
+                  </>
+                ) : isStreaming ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '60px 0', gap: '16px' }}>
+                    <Loader2 size={28} className="animate-spin" color="var(--accent-primary)" />
+                    <p style={{ color: 'var(--text-secondary)' }}>{phaseLabels[phase] ?? 'Traitement en cours…'}</p>
+                  </div>
                 ) : (
                   <div style={{ textAlign: 'center', padding: '80px 0' }}>
-                    <p style={{ color: 'var(--text-muted)' }}>
-                      {streamUrl ? 'En attente du rapport...' : 'Aucun rapport disponible pour cette session.'}
-                    </p>
+                    <p style={{ color: 'var(--text-muted)' }}>Aucun rapport disponible pour cette session.</p>
                   </div>
                 )}
               </>
@@ -306,27 +369,26 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
           backgroundColor: 'rgba(17, 24, 39, 0.3)'
         }}>
           <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>
-            Sources {sources.length > 0 ? `(${sources.length})` : ''}
+            Sources{sources.length > 0 ? ` (${sources.length})` : ''}
+            {isStreaming && sources.length > 0 && (
+              <span style={{ marginLeft: '8px', fontSize: '0.7rem', color: 'var(--status-running)', fontWeight: 400 }}>live</span>
+            )}
           </h2>
 
-          {loadingSession ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)' }}>
-              <Loader2 size={16} className="animate-spin" /> Chargement...
-            </div>
-          ) : sources.length > 0 ? (
+          {sources.length > 0 ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {sources.slice(0, 20).map((result: any, idx: number) => (
-                <SourceCard key={result.id || idx} result={result} />
+              {sources.slice(0, 30).map((result: any, idx: number) => (
+                <SourceCard key={result.url || result.id || idx} result={result} />
               ))}
-              {sources.length > 20 && (
+              {sources.length > 30 && (
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center' }}>
-                  + {sources.length - 20} autres sources
+                  + {sources.length - 30} autres sources
                 </p>
               )}
             </div>
           ) : (
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-              {streamUrl ? 'Collecte en cours...' : 'Aucune source collectée.'}
+              {isStreaming ? 'Collecte en cours…' : 'Aucune source collectée.'}
             </p>
           )}
         </aside>
@@ -344,6 +406,7 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
         .markdown-report pre { background: rgba(255,255,255,0.03); padding: 16px; border-radius: 8px; overflow-x: auto; margin-bottom: 1.5rem; }
         .animate-spin { animation: spin 1s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
       `}</style>
     </div>
   );
