@@ -1,157 +1,357 @@
 <!DOCTYPE html>
-<html lang="fr" data-theme="dark">
+<html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Tech Watch Agent{% endblock %}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <script src="https://unpkg.com/htmx.org@2.0.3" defer></script>
-  <style>
-    :root { --pico-font-size: 15px; }
 
-    header.top-nav {
-      border-bottom: 1px solid var(--pico-muted-border-color);
-      margin-bottom: 2rem;
-      padding: .75rem 0;
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            // Desert Rose dark palette
+            rose: {
+              bg:       '#0d0810',
+              panel:    '#160c12',
+              card:     '#1d1119',
+              input:    '#261521',
+              deep:     '#5d2e46',
+              deephov:  '#7a3d5a',
+              dust:     '#d4a5a5',
+              clay:     '#b87d6d',
+              sand:     '#e8d5c4',
+            }
+          }
+        }
+      }
     }
-    header.top-nav nav ul { margin: 0; padding: 0; }
-    header.top-nav nav a { text-decoration: none; color: var(--pico-muted-color); }
-    header.top-nav nav a:hover { color: var(--pico-color); }
-    header.top-nav nav a.active { color: var(--pico-primary); font-weight: 600; }
-    header.top-nav .brand { font-weight: 700; color: var(--pico-color); font-size: 1.05rem; }
+  </script>
+
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    [x-cloak] { display: none !important; }
+
+    /* Desert Rose CSS variables */
+    :root {
+      --bg:           #0d0810;
+      --panel:        #160c12;
+      --card:         #1d1119;
+      --card-hov:     #231522;
+      --input:        #261521;
+      --border:       rgba(212,165,165,.1);
+      --border-s:     rgba(212,165,165,.18);
+      --border-m:     rgba(212,165,165,.28);
+      --text:         #e8d5c4;
+      --text-muted:   rgba(232,213,196,.5);
+      --text-faint:   rgba(232,213,196,.28);
+      --accent:       #d4a5a5;
+      --accent-dark:  #5d2e46;
+      --accent-hov:   #7a3d5a;
+      --clay:         #b87d6d;
+      --chip-bg:      rgba(212,165,165,.1);
+    }
+
+    body { background: var(--bg); color: var(--text); }
+
+    /* Thin scrollbar */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(212,165,165,.2); border-radius: 9999px; }
+
+    /* HTMX indicator */
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator,
+    .htmx-request.htmx-indicator { display: inline-flex; align-items: center; gap: 5px; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin .65s linear infinite; }
 
     /* Status badges */
     .badge {
-      display: inline-block;
-      padding: .15rem .55rem;
-      border-radius: 1rem;
-      font-size: .72rem;
-      font-weight: 700;
-      letter-spacing: .03em;
-      text-transform: uppercase;
+      display: inline-flex; align-items: center; padding: 2px 8px;
+      border-radius: 9999px; font-size: 11px; font-weight: 600;
+      letter-spacing: .02em; white-space: nowrap;
     }
-    .badge-completed  { background: rgba(74,222,128,.15); color: #4ade80; border: 1px solid rgba(74,222,128,.3); }
-    .badge-running    { background: rgba(96,165,250,.15); color: #60a5fa; border: 1px solid rgba(96,165,250,.3); }
-    .badge-failed     { background: rgba(248,113,113,.15); color: #f87171; border: 1px solid rgba(248,113,113,.3); }
-    .badge-created    { background: rgba(156,163,175,.1); color: #9ca3af; border: 1px solid rgba(156,163,175,.2); }
-    .badge-pending    { background: rgba(156,163,175,.1); color: #9ca3af; border: 1px solid rgba(156,163,175,.2); }
-    .badge-done       { background: rgba(74,222,128,.15); color: #4ade80; border: 1px solid rgba(74,222,128,.3); }
-    .badge-skipped    { background: rgba(251,191,36,.1); color: #fbbf24; border: 1px solid rgba(251,191,36,.25); }
-    .badge-true       { background: rgba(74,222,128,.15); color: #4ade80; border: 1px solid rgba(74,222,128,.3); }
-    .badge-false      { background: rgba(156,163,175,.1); color: #9ca3af; border: 1px solid rgba(156,163,175,.2); }
-
-    /* Stats grid */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1rem;
-      margin-bottom: 2rem;
+    .badge-completed, .badge-done, .badge-success {
+      background: rgba(74,222,128,.1); color: #4ade80;
+      border: 1px solid rgba(74,222,128,.2);
     }
-    @media (max-width: 900px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
-    .stat-card { text-align: center; padding: 1.25rem 1rem; }
-    .stat-value { font-size: 2.2rem; font-weight: 700; color: var(--pico-primary); display: block; }
-    .stat-label { font-size: .75rem; color: var(--pico-muted-color); text-transform: uppercase; letter-spacing: .06em; margin-top: .25rem; }
-    .stat-card.warn .stat-value { color: #f87171; }
-
-    /* Two-column layout */
-    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-    @media (max-width: 768px) { .two-col { grid-template-columns: 1fr; } }
-
-    /* HTMX loading */
-    .htmx-indicator { display: none; }
-    .htmx-request .htmx-indicator { display: inline-flex; align-items: center; gap: .4rem; }
-
-    .spinner {
-      display: inline-block;
-      width: 1em; height: 1em;
-      border: 2px solid currentColor;
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin .6s linear infinite;
-      vertical-align: middle;
+    .badge-running {
+      background: rgba(96,165,250,.1); color: #60a5fa;
+      border: 1px solid rgba(96,165,250,.2);
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* Result boxes */
-    .result-box {
-      border-left: 3px solid var(--pico-primary);
-      padding: .75rem 1rem;
-      margin-top: 1rem;
-      background: rgba(255,255,255,.03);
-      border-radius: 0 .5rem .5rem 0;
+    .badge-failed, .badge-error {
+      background: rgba(248,113,113,.1); color: #f87171;
+      border: 1px solid rgba(248,113,113,.2);
     }
-    .result-box.success { border-left-color: #4ade80; }
-    .result-box.error   { border-left-color: #f87171; }
-
-    /* Report content */
-    .report-content { line-height: 1.75; }
-    .report-content h1, .report-content h2, .report-content h3 {
-      border-bottom: 1px solid var(--pico-muted-border-color);
-      padding-bottom: .3rem;
-      margin-top: 1.5rem;
+    .badge-pending, .badge-created {
+      background: rgba(212,165,165,.07); color: var(--text-muted);
+      border: 1px solid rgba(212,165,165,.13);
     }
-    .report-content pre { font-size: .82rem; }
-    .report-content table { font-size: .9rem; }
-
-    /* Plan steps table */
-    .step-tool { font-size: .75rem; color: var(--pico-muted-color); font-family: monospace; }
-    .step-error { font-size: .8rem; color: #f87171; margin-top: .2rem; }
-
-    /* Clickable rows */
-    tr.clickable { cursor: pointer; transition: background .1s; }
-    tr.clickable:hover { background: rgba(255,255,255,.04); }
-
-    /* Tabs */
-    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--pico-muted-border-color); margin-bottom: 1.5rem; }
-    .tab-btn {
-      background: none; border: none; border-bottom: 2px solid transparent;
-      padding: .6rem 1.25rem; margin-bottom: -1px; cursor: pointer;
-      color: var(--pico-muted-color); font-size: .9rem; border-radius: 0;
+    .badge-skipped {
+      background: rgba(251,191,36,.08); color: #fbbf24;
+      border: 1px solid rgba(251,191,36,.15);
     }
-    .tab-btn:hover { color: var(--pico-color); }
-    .tab-btn.active { color: var(--pico-primary); border-bottom-color: var(--pico-primary); font-weight: 600; }
-    .tab-panel { display: none; }
-    .tab-panel.active { display: block; }
+    .badge-true  { background: rgba(74,222,128,.1); color: #4ade80; border: 1px solid rgba(74,222,128,.2); }
+    .badge-false { background: rgba(212,165,165,.07); color: var(--text-muted); border: 1px solid var(--border); }
+    .badge-active { background: rgba(212,165,165,.15); color: var(--accent); border: 1px solid rgba(212,165,165,.25); }
+    .badge-scheduled { background: rgba(180,125,109,.12); color: var(--clay); border: 1px solid rgba(180,125,109,.2); }
 
-    /* Misc */
-    .muted { color: var(--pico-muted-color); }
-    .section-title { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: var(--pico-muted-color); text-transform: uppercase; letter-spacing: .05em; }
-    small.meta { color: var(--pico-muted-color); font-size: .8rem; }
+    /* Form controls */
+    .form-input, .form-select, .form-textarea {
+      width: 100%; background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px 12px;
+      font-size: 13px; color: var(--text); outline: none;
+      transition: border-color .15s; font-family: inherit;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(212,165,165,.1);
+    }
+    .form-input::placeholder, .form-textarea::placeholder { color: var(--text-faint); }
+    .form-select { appearance: none; cursor: pointer; }
+    .form-textarea { resize: vertical; min-height: 80px; line-height: 1.5; }
+    .form-label {
+      display: block; font-size: 11.5px; font-weight: 500;
+      color: var(--text-muted); margin-bottom: 5px; letter-spacing: .02em;
+    }
+
+    /* Toggle switch */
+    .toggle-track {
+      width: 36px; height: 20px; border-radius: 9999px;
+      cursor: pointer; transition: background .2s; flex-shrink: 0;
+      position: relative;
+    }
+    .toggle-thumb {
+      position: absolute; top: 2px; left: 2px;
+      width: 16px; height: 16px; background: white;
+      border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+      transition: transform .2s; pointer-events: none;
+    }
+
+    /* Sidebar nav link */
+    .nav-link {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; border-radius: 8px; font-size: 13px;
+      color: var(--text-muted); text-decoration: none;
+      transition: background .15s, color .15s;
+    }
+    .nav-link:hover { background: rgba(212,165,165,.06); color: var(--text); }
+    .nav-link.active { background: rgba(212,165,165,.12); color: var(--accent); }
+
+    /* Data table */
+    .data-table { width: 100%; border-collapse: collapse; }
+    .data-table th {
+      padding: 10px 16px; text-align: left; font-size: 10.5px;
+      text-transform: uppercase; letter-spacing: .06em;
+      color: var(--text-faint); font-weight: 500;
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .data-table td {
+      padding: 11px 16px; font-size: 13px; color: var(--text-muted);
+      border-bottom: 1px solid rgba(212,165,165,.04);
+    }
+    .data-table tbody tr { transition: background .1s; }
+    .data-table tbody tr:hover { background: rgba(212,165,165,.03); }
+    .data-table tbody tr.clickable { cursor: pointer; }
+    .data-table tbody tr:last-child td { border-bottom: none; }
+
+    /* Card */
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; overflow: hidden;
+    }
+    .card-header {
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    /* Buttons */
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s; border: none; outline: none; text-decoration: none; }
+    .btn-primary { background: var(--accent-dark); color: var(--sand, #e8d5c4); }
+    .btn-primary:hover { background: var(--accent-hov); }
+    .btn-secondary { background: rgba(212,165,165,.08); color: var(--text-muted); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: rgba(212,165,165,.14); color: var(--text); }
+    .btn-danger { background: rgba(248,113,113,.08); color: #f87171; border: 1px solid rgba(248,113,113,.15); }
+    .btn-danger:hover { background: rgba(248,113,113,.15); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    /* Plan step timeline */
+    .step-line { position: absolute; left: 11px; top: 28px; bottom: -8px; width: 1px; background: var(--border); }
+    .step-item:last-child .step-line { display: none; }
+
+    /* Markdown report */
+    .prose-report { line-height: 1.8; color: var(--text-muted); }
+    .prose-report h1, .prose-report h2, .prose-report h3 {
+      color: var(--text); padding-bottom: .3em;
+      border-bottom: 1px solid var(--border); margin: 1.5em 0 .5em;
+    }
+    .prose-report h1 { font-size: 1.35em; font-weight: 700; }
+    .prose-report h2 { font-size: 1.15em; font-weight: 600; }
+    .prose-report h3 { font-size: 1em; font-weight: 600; }
+    .prose-report p { margin: .65em 0; }
+    .prose-report a { color: var(--accent); }
+    .prose-report a:hover { text-decoration: underline; }
+    .prose-report code {
+      background: rgba(212,165,165,.08); padding: 1px 5px;
+      border-radius: 4px; font-size: .84em;
+      color: var(--clay); font-family: ui-monospace, monospace;
+    }
+    .prose-report pre {
+      background: rgba(0,0,0,.3); padding: 1rem; border-radius: 8px;
+      overflow-x: auto; margin: 1em 0; border: 1px solid var(--border);
+    }
+    .prose-report pre code { background: none; padding: 0; color: var(--text-muted); }
+    .prose-report table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: .875em; }
+    .prose-report th { background: rgba(212,165,165,.06); padding: .45rem .75rem; text-align: left; font-weight: 500; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+    .prose-report td { padding: .45rem .75rem; border-bottom: 1px solid rgba(212,165,165,.04); }
+    .prose-report ul, .prose-report ol { padding-left: 1.4em; margin: .4em 0; }
+    .prose-report li { margin: .2em 0; }
+    .prose-report blockquote { border-left: 3px solid var(--accent-dark); padding-left: 1em; color: var(--text-faint); margin: 1em 0; font-style: italic; }
+
+    /* Section divider */
+    .divider { height: 1px; background: var(--border); margin: 0 12px; }
+
+    /* Setting row */
+    .setting-row { display: flex; align-items: flex-start; gap: 16px; padding: 16px 0; border-bottom: 1px solid rgba(212,165,165,.05); }
+    .setting-row:last-child { border-bottom: none; }
+    .setting-label { flex: 1; min-width: 0; }
+    .setting-label p { font-size: 13px; font-weight: 500; color: var(--text); margin: 0 0 2px; }
+    .setting-label span { font-size: 11px; color: var(--text-faint); font-family: ui-monospace, monospace; }
+    .setting-value { flex-shrink: 0; text-align: right; }
   </style>
 </head>
-<body>
-  <header class="container-fluid top-nav">
-    <nav>
-      <ul>
-        <li><span class="brand">🔭 Tech Watch Agent</span></li>
-      </ul>
-      <ul>
-        <li><a href="/ui" class="{{ 'active' if active == 'home' else '' }}">Dashboard</a></li>
-        <li><a href="/ui/sessions" class="{{ 'active' if active == 'sessions' else '' }}">Sessions</a></li>
-        <li><a href="/ui/newsletter" class="{{ 'active' if active == 'newsletter' else '' }}">Newsletter</a></li>
-        <li><a href="/docs" target="_blank" class="muted" style="font-size:.85rem">API →</a></li>
-      </ul>
+<body class="flex h-screen overflow-hidden" style="font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',sans-serif">
+
+  <!-- ─── Sidebar ───────────────────────────────────────────────────────────── -->
+  <aside class="w-52 flex-shrink-0 flex flex-col border-r" style="background:var(--panel); border-color:var(--border)">
+
+    <!-- Brand -->
+    <div class="h-14 flex items-center px-4 gap-3 border-b" style="border-color:var(--border)">
+      <div class="w-8 h-8 rounded-xl flex items-center justify-center text-sm flex-shrink-0" style="background:var(--accent-dark)">🔭</div>
+      <div>
+        <p class="text-[13px] font-semibold leading-tight" style="color:var(--text)">Tech Watch</p>
+        <p class="text-[10px]" style="color:var(--text-faint)">Agent v0.3</p>
+      </div>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 p-2 overflow-y-auto space-y-0.5">
+      <p class="px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest" style="color:var(--text-faint)">Analyse</p>
+
+      <a href="/ui" class="nav-link {{ 'active' if active == 'home' else '' }}">
+        <svg class="w-4 h-4 flex-shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+        </svg>
+        Accueil
+      </a>
+
+      <a href="/ui/sessions" class="nav-link {{ 'active' if active == 'sessions' else '' }}">
+        <svg class="w-4 h-4 flex-shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        Sessions
+      </a>
+
+      <a href="/ui/newsletter" class="nav-link {{ 'active' if active == 'newsletter' else '' }}">
+        <svg class="w-4 h-4 flex-shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+        </svg>
+        Newsletter
+      </a>
+
+      <a href="/ui/watch-profiles" class="nav-link {{ 'active' if active == 'profiles' else '' }}">
+        <svg class="w-4 h-4 flex-shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="8" r="4"/><path stroke-linecap="round" stroke-linejoin="round" d="M4 20a8 8 0 0116 0"/>
+        </svg>
+        Mes Veilles
+      </a>
+
+      <div class="divider my-2"></div>
+      <p class="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest" style="color:var(--text-faint)">Contrôle</p>
+
+      <a href="/ui/scheduler" class="nav-link {{ 'active' if active == 'scheduler' else '' }}">
+        <svg class="w-4 h-4 flex-shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Programmation
+      </a>
+
+      <a href="/ui/settings" class="nav-link {{ 'active' if active == 'settings' else '' }}">
+        <svg class="w-4 h-4 flex-shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+        Paramètres
+      </a>
+
+      <div class="divider my-2"></div>
+
+      <a href="/docs" target="_blank" class="nav-link" style="color:var(--text-faint)">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+        </svg>
+        API Docs
+      </a>
     </nav>
-  </header>
 
-  <main class="container">
-    {% block content %}{% endblock %}
-  </main>
+    <!-- Footer -->
+    <div class="px-4 py-3 border-t" style="border-color:var(--border)">
+      <div class="flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" title="Scheduler actif"></span>
+        <p class="text-[11px]" style="color:var(--text-faint)">Scheduler actif</p>
+      </div>
+    </div>
+  </aside>
 
-  <footer class="container-fluid" style="margin-top:3rem;padding:1rem 2rem;border-top:1px solid var(--pico-muted-border-color)">
-    <small class="muted">Tech Watch Agent — usage interne</small>
-  </footer>
+  <!-- ─── Main ──────────────────────────────────────────────────────────────── -->
+  <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+    <!-- Top bar -->
+    <header class="h-14 flex items-center px-6 gap-4 flex-shrink-0 border-b" style="background:var(--bg); border-color:var(--border)">
+      <div class="flex-1 flex items-center gap-3">
+        {% block topbar_left %}
+        <h1 class="text-[15px] font-semibold" style="color:var(--text)">{% block page_title %}Dashboard{% endblock %}</h1>
+        {% endblock %}
+      </div>
+      <div class="flex items-center gap-4">
+        {% block topbar_actions %}{% endblock %}
+        <div id="global-spinner" class="hidden items-center gap-1.5 text-xs" style="color:var(--text-faint)">
+          <svg class="w-3.5 h-3.5 spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-70" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+          </svg>
+          Chargement…
+        </div>
+        <span class="text-[11px] tabular-nums" style="color:var(--text-faint)" id="clock"></span>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <main class="flex-1 overflow-y-auto flex flex-col" style="background:var(--bg)">
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>
 
   <script>
-    // Simple tab system
-    function switchTab(groupId, tabId) {
-      document.querySelectorAll('[data-tab-group="' + groupId + '"]').forEach(el => {
-        el.classList.toggle('active', el.dataset.tabId === tabId);
-      });
-      document.querySelectorAll('[data-panel-group="' + groupId + '"]').forEach(el => {
-        el.classList.toggle('active', el.dataset.panelId === tabId);
-      });
-    }
+    (() => {
+      const el = document.getElementById('clock');
+      const tick = () => { if(el) el.textContent = new Date().toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'}); };
+      tick(); setInterval(tick, 30000);
+    })();
+    const _spinner = document.getElementById('global-spinner');
+    document.addEventListener('htmx:beforeRequest', () => _spinner?.classList.replace('hidden','flex'));
+    document.addEventListener('htmx:afterRequest',  () => _spinner?.classList.replace('flex','hidden'));
+    {% block scripts %}{% endblock %}
   </script>
 </body>
 </html>

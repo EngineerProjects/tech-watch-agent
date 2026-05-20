@@ -16,8 +16,6 @@ Features:
 from __future__ import annotations
 
 import hashlib
-import os
-import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -26,6 +24,7 @@ from app.core.logging import get_logger
 
 
 logger = get_logger(__name__)
+DEFAULT_EMBEDDING_DIM = 1536
 
 
 @dataclass
@@ -53,8 +52,8 @@ class EmbeddingService:
         provider: Optional[str] = None,
         model: Optional[str] = None,
     ) -> None:
-        settings = get_settings()
-        self._provider = provider or settings.llm_provider
+        self._settings = get_settings()
+        self._provider = provider or self._settings.llm_provider
         self._model = model or self._get_default_model()
         self._cache: dict[str, list[float]] = {}
         self._cache_size = 1000
@@ -87,14 +86,35 @@ class EmbeddingService:
                 cached=True,
             )
 
-        if self._provider == "openai":
+        try:
+            return await self._embed_via_provider(self._provider, text)
+        except Exception as exc:
+            logger.warning("%s embedding failed: %s, trying fallback chain", self._provider, exc)
+            return await self._embed_with_fallback(text, failed_provider=self._provider)
+
+    async def _embed_via_provider(self, provider: str, text: str) -> EmbeddingResult:
+        if provider == "openai":
             return await self._embed_openai(text)
-        elif self._provider == "zai":
+        if provider == "zai":
             return await self._embed_zai(text)
-        elif self._provider == "ollama":
+        if provider == "ollama":
             return await self._embed_ollama(text)
-        else:
-            return await self._embed_openai(text)
+        raise ValueError(f"Unsupported embedding provider: {provider}")
+
+    def _fallback_providers(self, failed_provider: str) -> list[str]:
+        providers = ["openai", "zai", "ollama"]
+        ordered = [p for p in providers if p != failed_provider]
+
+        def configured(provider: str) -> bool:
+            if provider == "openai":
+                return bool(self._settings.llm_api_key)
+            if provider == "zai":
+                return bool(self._settings.zai_api_key or self._settings.llm_api_key)
+            if provider == "ollama":
+                return bool(self._settings.llm_base_url)
+            return False
+
+        return [provider for provider in ordered if configured(provider)]
 
     async def embed_batch(self, texts: list[str]) -> list[EmbeddingResult]:
         """Generate embeddings for multiple texts.
@@ -141,9 +161,8 @@ class EmbeddingService:
                 provider="openai",
                 tokens_used=response.usage.total_tokens,
             )
-        except Exception as exc:
-            logger.warning("OpenAI embedding failed: %s, trying fallback", exc)
-            return await self._embed_with_retry(text)
+        except Exception:
+            raise
 
     async def _embed_zai(self, text: str) -> EmbeddingResult:
         """Generate embedding using Z.ai API."""
@@ -179,9 +198,8 @@ class EmbeddingService:
                 provider="zai",
                 tokens_used=response.usage.total_tokens,
             )
-        except Exception as exc:
-            logger.warning("Z.ai embedding failed: %s, trying fallback", exc)
-            return await self._embed_with_retry(text)
+        except Exception:
+            raise
 
     async def _embed_ollama(self, text: str) -> EmbeddingResult:
         """Generate embedding using Ollama API."""
@@ -219,37 +237,43 @@ class EmbeddingService:
                     model=self._model,
                     provider="ollama",
                 )
-        except Exception as exc:
-            logger.warning("Ollama embedding failed: %s, trying fallback", exc)
-            return await self._embed_with_retry(text)
+        except Exception:
+            raise
 
-    async def _embed_with_retry(self, text: str, max_attempts: int = 2) -> EmbeddingResult:
-        """Fallback embedding with retry."""
-        for attempt in range(max_attempts):
-            if attempt > 0:
-                await self._sleep_with_backoff(attempt)
-
+    async def _embed_with_fallback(self, text: str, failed_provider: str) -> EmbeddingResult:
+        """Try alternate providers before using the deterministic fallback."""
+        providers = self._fallback_providers(failed_provider)
+        for attempt, provider in enumerate(providers, start=1):
+            if attempt > 1:
+                await self._sleep_with_backoff(attempt - 1)
             try:
-                if self._provider == "openai":
-                    return await self._embed_openai(text)
-                elif self._provider == "ollama":
-                    return await self._embed_ollama(text)
-            except Exception:
-                continue
+                return await self._embed_via_provider(provider, text)
+            except Exception as exc:
+                logger.warning("Fallback provider %s failed: %s", provider, exc)
 
-        logger.warning("All embedding attempts failed, using simple hash-based fallback")
+        logger.warning("All embedding providers failed, using deterministic fallback")
         return self._embed_fallback(text)
 
     def _embed_fallback(self, text: str) -> EmbeddingResult:
-        """Simple fallback using text hash for development."""
-        import struct
+        """Deterministic local fallback embedding for development/offline mode."""
+        import math
 
-        text_hash = hashlib.sha256(text.encode()).digest()
-        embedding = list(struct.unpack("1536f", text_hash[:1536]))
+        embedding: list[float] = []
+        counter = 0
+        while len(embedding) < DEFAULT_EMBEDDING_DIM:
+            digest = hashlib.sha256(f"{text}:{counter}".encode()).digest()
+            for i in range(0, len(digest), 4):
+                chunk = digest[i:i + 4]
+                if len(chunk) < 4:
+                    continue
+                value = int.from_bytes(chunk, "big") / 0xFFFFFFFF
+                embedding.append((value * 2.0) - 1.0)
+                if len(embedding) == DEFAULT_EMBEDDING_DIM:
+                    break
+            counter += 1
 
-        normalized = [
-            (x - 128) / 128 for x in embedding
-        ]
+        norm = math.sqrt(sum(x * x for x in embedding))
+        normalized = [x / norm for x in embedding] if norm else embedding
 
         cache_key = self._cache_key(text)
         self._add_to_cache(cache_key, normalized)

@@ -17,6 +17,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
+from sqlalchemy import select
+
 from app.core.logging import get_logger
 
 
@@ -75,6 +77,7 @@ class SessionManager:
     def __init__(self, session_id: uuid.UUID) -> None:
         self.session_id = session_id
         self._db_session = None
+        self._db_context = None
         self._session = None
         self._phase = SessionPhase.PLAN
 
@@ -82,21 +85,24 @@ class SessionManager:
         """Initialize session from database."""
         from app.db.base import get_db_context
         from app.db.models import ResearchSession
-        
-        self._db_session = get_db_context().__enter__()
-        
+
+        self._db_context = get_db_context()
+        self._db_session = await self._db_context.__aenter__()
+
         result = await self._db_session.execute(
             select(ResearchSession).where(ResearchSession.id == self.session_id)
         )
         self._session = result.scalar_one_or_none()
-        
+
         if self._session:
             self._phase = SessionPhase(self._session.phase)
 
     async def close(self) -> None:
         """Close database session."""
-        if self._db_session:
-            await self._db_session.close()
+        if self._db_context is not None:
+            await self._db_context.__aexit__(None, None, None)
+            self._db_context = None
+            self._db_session = None
 
     @property
     def session(self):
@@ -146,6 +152,7 @@ class SessionManager:
             self._session.plan = {"steps": plan}
             self._session.plan_version = self._session.plan_version + 1
             self._session.current_step_index = current_step_index
+            self._session.status = "completed" if phase == SessionPhase.COMPLETED else "running"
             self._session.updated_at = datetime.now()
 
             await self._db_session.commit()
@@ -357,6 +364,55 @@ class SessionManager:
         except Exception as exc:
             logger.error("Failed to save analysis: %s", exc)
             await self._db_session.rollback()
+
+    async def update_session(
+        self,
+        *,
+        status: Optional[str] = None,
+        phase: Optional[SessionPhase] = None,
+        plan: Optional[list[dict]] = None,
+        current_step_index: Optional[int] = None,
+        research_results: Optional[list[dict]] = None,
+        analysis_results: Optional[str] = None,
+        final_report: Optional[str] = None,
+        notes: Optional[list[str]] = None,
+        raw_notes: Optional[list[str]] = None,
+        completed_at: Optional[datetime] = None,
+    ) -> None:
+        """Persist run state updates on the existing research session."""
+        if not self._session:
+            logger.warning("Session not initialized, skipping session update")
+            return
+
+        try:
+            if status is not None:
+                self._session.status = status
+            if phase is not None:
+                self._session.phase = phase.value
+                self._phase = phase
+            if plan is not None:
+                self._session.plan = {"steps": plan}
+            if current_step_index is not None:
+                self._session.current_step_index = current_step_index
+            if research_results is not None:
+                self._session.research_results = research_results
+            if analysis_results is not None:
+                self._session.analysis_results = analysis_results
+            if final_report is not None:
+                self._session.final_report = final_report
+            if notes is not None:
+                self._session.notes = notes
+            if raw_notes is not None:
+                self._session.raw_notes = raw_notes
+            if completed_at is not None:
+                self._session.completed_at = completed_at
+
+            self._session.updated_at = datetime.now()
+            await self._db_session.commit()
+        except Exception as exc:
+            logger.error("Failed to update session: %s", exc)
+            await self._db_session.rollback()
+            raise
 
     def estimate_memory_size(self, state: dict) -> int:
         """Estimate current memory size from state.

@@ -120,10 +120,10 @@ db-history: ## Show Alembic migration history
 db-current: ## Show current Alembic revision
 	alembic current
 
-db-reset: ## Reset database containers and restart API (destroys DB data)
-	$(COMPOSE) down -v
-	$(COMPOSE) up -d postgres redis
-	sleep 5
+db-reset: ## Restart API after clearing Redis (DB is on devinfra — reset there if needed)
+	$(COMPOSE) down
+	$(COMPOSE) up -d redis
+	sleep 3
 	$(COMPOSE) up -d api
 
 clean: clean-py clean-test clean-build ## Clean local Python, test, and build artifacts
@@ -139,8 +139,8 @@ clean-build: ## Remove packaging artifacts
 	rm -rf build dist .eggs
 	find . -type d -name "*.egg-info" -prune -exec rm -rf {} +
 
-clean-logs: ## Remove local log directory contents if present
-	rm -rf logs
+clean-logs: ## Remove runtime data in .volumes/logs
+	rm -rf .volumes/logs && mkdir -p .volumes/logs
 
 clean-docker: ## Remove compose services, volumes, and orphans
 	$(COMPOSE) down -v --remove-orphans

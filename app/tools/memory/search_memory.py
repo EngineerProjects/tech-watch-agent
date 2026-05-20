@@ -11,6 +11,7 @@ Tools:
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Optional
 
 from app.tools.base import BaseTool, ToolCategory, ToolResult
@@ -143,9 +144,10 @@ class SearchMemoryTool(BaseTool):
                 embedding = await vector_store.generate_embedding(query)
 
                 search_results = await vector_store.search(
-                    embedding=embedding,
+                    query_embedding=embedding,
                     top_k=top_k * 2,
-                    min_score=min_score,
+                    similarity_threshold=min_score,
+                    filter_metadata={"topic": topic_filter} if topic_filter else None,
                 )
 
                 for result in search_results:
@@ -185,7 +187,10 @@ class SearchMemoryTool(BaseTool):
         stmt = select(Article).where(
             Article.title.ilike(f"%{query}%") |
             Article.summary.ilike(f"%{query}%")
-        ).limit(top_k)
+        )
+        if topic_filter:
+            stmt = stmt.where(Article.topic == topic_filter)
+        stmt = stmt.limit(top_k)
 
         result = await session.execute(stmt)
         articles = result.scalars().all()
@@ -314,7 +319,7 @@ class GetRecentContextTool(BaseTool):
         }
 
         async with get_db_context() as session:
-            stmt = select(UserSession).where(UserSession.id == session_id)
+            stmt = select(UserSession).where(UserSession.id == uuid.UUID(session_id))
             result = await session.execute(stmt)
             user_session = result.scalar_one_or_none()
 
@@ -441,15 +446,16 @@ class StoreResearchContextTool(BaseTool):
         """Store context in database."""
         from app.db.base import get_db_context
         from app.db.models import ResearchSession
-        from sqlalchemy import update
+        from sqlalchemy import select
         import uuid
 
+        session_uuid = uuid.UUID(session_id)
         context_id = str(uuid.uuid4())
 
         async with get_db_context() as session:
             stmt = select(ResearchSession).where(
-                ResearchSession.user_id == uuid.UUID(session_id)
-            ).order_by(ResearchSession.created_at.desc()).limit(1)
+                ResearchSession.id == session_uuid
+            ).limit(1)
 
             result = await session.execute(stmt)
             research_session = result.scalar_one_or_none()
@@ -458,16 +464,22 @@ class StoreResearchContextTool(BaseTool):
                 notes = list(research_session.raw_notes or [])
                 notes.append(f"[{content_type.upper()}]: {content}")
                 research_session.raw_notes = notes
+                merged_meta = dict(research_session.meta_data or {})
+                if metadata:
+                    merged_meta.setdefault("stored_context", []).append(metadata)
+                    research_session.meta_data = merged_meta
                 await session.commit()
             else:
                 new_session = ResearchSession(
-                    id=uuid.uuid4(),
-                    user_id=uuid.UUID(session_id) if session_id else None,
+                    id=session_uuid,
+                    user_id=None,
                     research_brief=content[:500],
                     notes=[content],
                     final_report="",
                     raw_notes=[content],
                     status="stored",
+                    phase="research",
+                    meta_data={"stored_context": [metadata]} if metadata else {},
                 )
                 session.add(new_session)
                 await session.commit()

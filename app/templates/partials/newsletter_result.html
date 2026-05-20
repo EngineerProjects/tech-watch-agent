@@ -1,29 +1,51 @@
 {% if error %}
-<div class="result-box error">
-  <strong>✗ Erreur</strong>
-  <p style="margin:.4rem 0 0;font-size:.85rem">{{ error }}</p>
+<div class="mt-4 rounded-xl p-4 border" style="background:rgba(248,113,113,.05); border-color:rgba(248,113,113,.2)">
+  <div class="flex items-start gap-3">
+    <div class="w-6 h-6 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+      <svg class="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </div>
+    <div>
+      <p class="text-sm font-semibold text-red-400">Erreur</p>
+      <p class="text-xs text-rose-sand/40 mt-1">{{ error }}</p>
+    </div>
+  </div>
 </div>
 {% elif result and result.success %}
-<div class="result-box success">
-  <strong>✓ Newsletter générée</strong>
-  <br><small class="meta">
-    {{ result.metadata.get('article_count', 0) }} articles &nbsp;|&nbsp;
-    Email : {{ '✓ envoyé' if email_sent else 'non envoyé' }}
-    {% if result.output.get('subject') %} &nbsp;|&nbsp; {{ result.output.subject }}{% endif %}
-  </small>
-  {% if result.output.get('newsletter') %}
-  <details style="margin-top:.75rem">
-    <summary>Aperçu</summary>
-    <div class="report-content" style="max-height:400px;overflow-y:auto;margin-top:.5rem;font-size:.9rem">
-      {{ result.output.newsletter[:2000] | e | replace('\n', '<br>') | safe }}
-      {% if result.output.newsletter|length > 2000 %}…{% endif %}
+<div class="mt-4 rounded-xl p-4 border" style="background:rgba(74,222,128,.05); border-color:rgba(74,222,128,.2)">
+  <div class="flex items-start gap-3">
+    <div class="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+      <svg class="w-3.5 h-3.5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+      </svg>
     </div>
-  </details>
-  {% endif %}
+    <div class="flex-1 min-w-0">
+      <p class="text-sm font-semibold text-green-400">Newsletter générée</p>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px] text-rose-sand/40">
+        <span>📰 {{ result.metadata.get('article_count', 0) }} articles</span>
+        <span class="{{ 'text-green-500' if email_sent else 'text-rose-sand/30' }}">
+          📧 {{ 'Email envoyé' if email_sent else 'Sans envoi email' }}
+        </span>
+        {% if result.output.get('subject') %}
+        <span>{{ result.output.subject }}</span>
+        {% endif %}
+      </div>
+      {% if result.output.get('newsletter') %}
+      <details class="mt-3">
+        <summary class="text-xs text-rose-sand/40 hover:text-rose-sand/70 cursor-pointer select-none">Aperçu</summary>
+        <div class="prose-report mt-3 text-sm max-h-80 overflow-y-auto pr-2">
+          {{ result.output.newsletter[:2000] | e | replace('\n', '<br>') | safe }}
+          {% if result.output.newsletter|length > 2000 %}<p class="text-rose-sand/30 mt-2">… (tronqué)</p>{% endif %}
+        </div>
+      </details>
+      {% endif %}
+    </div>
+  </div>
 </div>
 {% elif result %}
-<div class="result-box error">
-  <strong>✗ Échec</strong>
-  {% if result.errors %}<p style="font-size:.85rem">{{ result.errors[0] }}</p>{% endif %}
+<div class="mt-4 rounded-xl p-4 border" style="background:rgba(248,113,113,.05); border-color:rgba(248,113,113,.2)">
+  <p class="text-sm font-semibold text-red-400">Échec</p>
+  {% if result.errors %}<p class="text-xs text-rose-sand/40 mt-1">{{ result.errors[0] }}</p>{% endif %}
 </div>
 {% endif %}

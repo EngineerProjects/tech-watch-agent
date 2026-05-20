@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 
 class HealthResponse(BaseModel):
     status: str
@@ -55,6 +55,21 @@ class DeepResearchRequest(BaseModel):
     research_depth: str = "medium"
     allow_clarification: bool = True
 
+    @field_validator("query")
+    @classmethod
+    def query_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("query must not be empty")
+        return v
+
+    @field_validator("research_depth")
+    @classmethod
+    def depth_valid(cls, v: str) -> str:
+        if v not in ("shallow", "medium", "deep"):
+            raise ValueError("research_depth must be 'shallow', 'medium', or 'deep'")
+        return v
+
 class DeepResearchResponse(BaseModel):
     session_id: str
     status: str
@@ -88,8 +103,32 @@ class OrchestratorRequest(BaseModel):
     mode: str = "v2"
     autonomous: bool = True
 
+    @field_validator("task")
+    @classmethod
+    def task_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("task must not be empty")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def mode_valid(cls, v: str) -> str:
+        if v not in ("v1", "v2"):
+            raise ValueError("mode must be 'v1' or 'v2'")
+        return v
+
+    @field_validator("topics")
+    @classmethod
+    def topics_clean(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return None
+        cleaned = [t.strip() for t in v if t.strip()]
+        return cleaned or None
+
 class OrchestratorResponse(BaseModel):
     success: bool
+    session_id: Optional[str] = None
     report: Optional[str] = None
     subject: Optional[str] = None
     email_sent: bool

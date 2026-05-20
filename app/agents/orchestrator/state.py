@@ -7,6 +7,7 @@ the execution plan structure and all intermediate results.
 
 from __future__ import annotations
 
+from typing import Any
 from enum import Enum
 from typing import TypedDict
 
@@ -65,10 +66,14 @@ class PlanStep(TypedDict):
 
 
 class OrchestratorState(TypedDict, total=False):
+    session_id: str
     task: str
+    research_brief: str
     task_id: str
     topics: list[str]
     send_email: bool
+    metadata: dict[str, Any]
+    watch_context: Any
     plan: list[PlanStep]
     current_step_index: int
     articles: list[dict]
@@ -90,3 +95,6 @@ class OrchestratorState(TypedDict, total=False):
     completed_at: str | None
     approval_threshold: float
     autonomous: bool
+    plan_attempts: int
+    max_plan_retries: int
+    resumed_from_checkpoint: bool

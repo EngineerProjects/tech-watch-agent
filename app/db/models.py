@@ -462,6 +462,63 @@ class ToolExecution(Base):
         return f"<ToolExecution(tool={self.tool_name}, success={self.success})>"
 
 
+class WatchProfile(Base):
+    """Named watch profile — user-configured recurring tech watch job.
+
+    Encapsulates everything needed to run an autonomous tech watch:
+    topics, depth, output format, source preferences, schedule, and
+    free-form focus instructions that shape the prompt context.
+    """
+
+    __tablename__ = "watch_profiles"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    topics: Mapped[list] = mapped_column(JSONType(), default=list)
+    depth: Mapped[str] = mapped_column(String(20), default="standard")   # brief|standard|deep
+    format: Mapped[str] = mapped_column(String(20), default="report")    # digest|report|newsletter
+    angle: Mapped[str] = mapped_column(String(20), default="both")       # technical|business|both
+    sources: Mapped[list] = mapped_column(JSONType(), default=list)      # web,arxiv,reddit,github,youtube
+    language: Mapped[str] = mapped_column(String(10), default="fr")
+    audience: Mapped[str] = mapped_column(String(200), default="solo developer")
+    focus: Mapped[Optional[str]] = mapped_column(Text, nullable=True)    # free-form instructions
+    schedule_time: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)   # "08:00"
+    schedule_days: Mapped[list] = mapped_column(JSONType(), default=list)             # ["monday"]
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<WatchProfile(id={self.id}, name={self.name!r}, depth={self.depth})>"
+
+
+class AppConfig(Base):
+    """Runtime configuration overrides stored in DB.
+
+    Keys match ENV VAR names (lowercase). Values overlay env-var defaults
+    at the dashboard layer; agents always see the in-memory Settings object.
+    """
+
+    __tablename__ = "app_config"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AppConfig(key={self.key!r})>"
+
+
 class UserSession(Base):
     """User session model for tracking context across interactions.
 

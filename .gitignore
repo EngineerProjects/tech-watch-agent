@@ -1,13 +1,36 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .pytest_cache/
 *.egg-info/
-logs/*.log
+.eggs/
+dist/
+build/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Runtime data (all goes in .volumes/)
+.volumes/
+logs/
+
+# Secrets & credentials
 .env
 credentials.json
 token.json
+
+# DB files
 *.db
 *.sqlite
 
+# Legacy / unused
 sources/
+
+# IDE
+.idea/
+.vscode/
+*.swp

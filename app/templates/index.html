@@ -1,131 +1,199 @@
 {% extends "base.html" %}
-{% block title %}Dashboard — Tech Watch Agent{% endblock %}
+{% block title %}Accueil — Tech Watch Agent{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block topbar_actions %}
+<button
+  hx-get="/ui/_stats"
+  hx-target="#stats-grid"
+  hx-swap="outerHTML"
+  class="flex items-center gap-1.5 text-xs text-rose-sand/40 hover:text-rose-sand/70 transition-colors px-3 py-1.5 rounded-lg hover:bg-white/[.04]">
+  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+  </svg>
+  Rafraîchir
+</button>
+{% endblock %}
 
 {% block content %}
-<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:1.5rem">
-  <h2 style="margin:0">Dashboard</h2>
-  <small class="muted" id="stats-refresh">
-    <span hx-get="/ui/_stats" hx-trigger="every 60s" hx-target="#stats-container" hx-swap="innerHTML"></span>
-    Refresh auto toutes les 60s
-  </small>
-</div>
+<div class="p-6 flex flex-col gap-5 h-full min-h-0">
 
-<!-- Stats -->
-<div id="stats-container">
+  <!-- ── Stats ──────────────────────────────────────────────────────────────── -->
   {% include "partials/stats.html" %}
-</div>
 
-<!-- Main content: Launch + Recent sessions -->
-<div class="two-col">
+  <!-- ── Two-col main ──────────────────────────────────────────────────────── -->
+  <div class="grid grid-cols-1 gap-5 xl:grid-cols-2 flex-1 min-h-0">
 
-  <!-- Launch form -->
-  <article>
-    <header>
-      <strong>▶ Lancer une analyse</strong>
-    </header>
+    <!-- Launch panel -->
+    <div class="rounded-xl border overflow-hidden" style="background:var(--card); border-color:var(--border)"
+         x-data="{ tab: 'v2', emailV2: false, emailV1: false }">
 
-    <!-- Tabs -->
-    <div class="tabs">
-      <button class="tab-btn active" data-tab-group="launch" data-tab-id="v2"
-              onclick="switchTab('launch', 'v2')">
-        Orchestrateur V2
-      </button>
-      <button class="tab-btn" data-tab-group="launch" data-tab-id="v1"
-              onclick="switchTab('launch', 'v1')">
-        Newsletter V1
-      </button>
-    </div>
-
-    <!-- V2 tab -->
-    <div class="tab-panel active" data-panel-group="launch" data-panel-id="v2">
-      <form hx-post="/ui/_launch"
-            hx-target="#run-result"
-            hx-swap="innerHTML"
-            hx-indicator="#launch-spinner">
-        <input type="hidden" name="mode" value="v2">
-
-        <label>
-          Tâche de recherche
-          <input type="text" name="task" value="Weekly tech watch" required>
-        </label>
-        <label>
-          Topics <small class="muted">(séparés par des virgules)</small>
-          <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM, agents…">
-        </label>
-        <label>
-          <input type="checkbox" name="send_email" value="true" role="switch">
-          Envoyer par email après génération
-        </label>
-
-        <div style="display:flex;align-items:center;gap:1rem">
-          <button type="submit" hx-disabled-elt="this">▶ Lancer</button>
-          <span id="launch-spinner" class="htmx-indicator muted">
-            <span class="spinner"></span> En cours… (peut prendre plusieurs minutes)
-          </span>
+      <!-- Header with tab switcher -->
+      <div class="px-5 py-4 border-b flex items-center justify-between" style="border-color:var(--border)">
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-6 rounded-lg bg-indigo-600/20 flex items-center justify-center flex-shrink-0">
+            <svg class="w-3.5 h-3.5 text-rose-dust" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/>
+            </svg>
+          </div>
+          <h2 class="text-sm font-semibold text-rose-sand">Lancer une analyse</h2>
         </div>
-      </form>
-    </div>
-
-    <!-- V1 tab -->
-    <div class="tab-panel" data-panel-group="launch" data-panel-id="v1">
-      <form hx-post="/ui/_newsletter"
-            hx-target="#run-result"
-            hx-swap="innerHTML"
-            hx-indicator="#launch-spinner">
-        <label>
-          Topics <small class="muted">(séparés par des virgules)</small>
-          <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM…">
-        </label>
-        <label>
-          <input type="checkbox" name="send_email" value="true" role="switch">
-          Envoyer par email
-        </label>
-        <div style="display:flex;align-items:center;gap:1rem">
-          <button type="submit" class="secondary" hx-disabled-elt="this">📧 Générer newsletter</button>
-          <span class="htmx-indicator muted">
-            <span class="spinner"></span> Génération en cours…
-          </span>
+        <!-- Tabs -->
+        <div class="flex gap-0.5 p-1 rounded-lg" style="background:var(--input)">
+          <button @click="tab='v2'"
+            :class="tab==='v2' ? 'bg-zinc-700 text-rose-sand shadow-sm' : 'text-rose-sand/40 hover:text-rose-sand/70'"
+            class="px-3 py-1 text-[12px] rounded-md transition-all font-medium">
+            Orchestrateur V2
+          </button>
+          <button @click="tab='v1'"
+            :class="tab==='v1' ? 'bg-zinc-700 text-rose-sand shadow-sm' : 'text-rose-sand/40 hover:text-rose-sand/70'"
+            class="px-3 py-1 text-[12px] rounded-md transition-all font-medium">
+            Newsletter V1
+          </button>
         </div>
-      </form>
+      </div>
+
+      <div class="p-5">
+        <!-- V2 form -->
+        <form x-show="tab==='v2'" x-cloak
+              hx-post="/ui/_launch"
+              hx-target="#run-result"
+              hx-swap="innerHTML"
+              hx-indicator="#launch-spinner"
+              class="space-y-4">
+          <input type="hidden" name="mode" value="v2">
+          <div>
+            <label class="form-label">Tâche de recherche</label>
+            <input type="text" name="task" value="Weekly tech watch" required class="form-input">
+          </div>
+          <div>
+            <label class="form-label">Topics <span style="color:#52525b">(séparés par virgules)</span></label>
+            <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM, agents…" class="form-input">
+          </div>
+          <label class="flex items-center gap-3 cursor-pointer select-none">
+            <div class="relative flex items-center">
+              <input type="checkbox" name="send_email" value="true" x-model="emailV2" class="sr-only">
+              <div :style="emailV2 ? 'background:var(--accent-dark)' : 'background:#3f3f46'"
+                   class="toggle-track" @click="emailV2=!emailV2">
+                <div :style="emailV2 ? 'transform:translateX(16px)' : 'transform:translateX(0)'"
+                     class="toggle-thumb"></div>
+              </div>
+            </div>
+            <span class="text-sm text-rose-sand/70">Envoyer par email après génération</span>
+          </label>
+          <div class="flex items-center gap-3 pt-1">
+            <button type="submit"
+              class="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg transition-colors text-white"
+              style="background:var(--accent-dark)"
+              onmouseover="this.style.background='var(--accent-hov)'"
+              onmouseout="this.style.background='var(--accent-dark)'">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/>
+              </svg>
+              Lancer
+            </button>
+            <span id="launch-spinner" class="htmx-indicator text-rose-sand/40 text-xs">
+              <svg class="w-4 h-4 spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-70" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+              </svg>
+              En cours (quelques minutes)…
+            </span>
+          </div>
+        </form>
+
+        <!-- V1 form -->
+        <form x-show="tab==='v1'" x-cloak
+              hx-post="/ui/_newsletter"
+              hx-target="#run-result"
+              hx-swap="innerHTML"
+              hx-indicator="#launch-spinner"
+              class="space-y-4">
+          <div>
+            <label class="form-label">Topics <span style="color:#52525b">(séparés par virgules)</span></label>
+            <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM…" class="form-input">
+          </div>
+          <label class="flex items-center gap-3 cursor-pointer select-none">
+            <div class="relative flex items-center">
+              <input type="checkbox" name="send_email" value="true" x-model="emailV1" class="sr-only">
+              <div :style="emailV1 ? 'background:var(--accent-dark)' : 'background:#3f3f46'"
+                   class="toggle-track" @click="emailV1=!emailV1">
+                <div :style="emailV1 ? 'transform:translateX(16px)' : 'transform:translateX(0)'"
+                     class="toggle-thumb"></div>
+              </div>
+            </div>
+            <span class="text-sm text-rose-sand/70">Envoyer par email</span>
+          </label>
+          <button type="submit"
+            class="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg transition-colors text-rose-sand"
+            style="background:#3f3f46"
+            onmouseover="this.style.background='#52525b'"
+            onmouseout="this.style.background='#3f3f46'">
+            📧 Générer newsletter
+          </button>
+        </form>
+
+        <!-- Result area (filled by HTMX) -->
+        <div id="run-result"></div>
+      </div>
     </div>
-  </article>
 
-  <!-- Recent sessions -->
-  <article>
-    <header style="display:flex;justify-content:space-between;align-items:center">
-      <strong>🕐 Sessions récentes</strong>
-      <a href="/ui/sessions" style="font-size:.85rem">Voir tout →</a>
-    </header>
-    {% if sessions %}
-    <table>
-      <thead>
-        <tr>
-          <th>Brief</th>
-          <th>Status</th>
-          <th>Date</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for s in sessions %}
-        <tr class="clickable" onclick="location.href='/ui/sessions/{{ s.id }}'">
-          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.brief }}</td>
-          <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
-          <td><small class="muted">{{ s.created_at }}</small></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p class="muted" style="text-align:center;padding:2rem 0">
-      Aucune session pour l'instant.<br>
-      <small>Lancez votre première analyse ci-contre.</small>
-    </p>
-    {% endif %}
-  </article>
+    <!-- Recent sessions -->
+    <div class="rounded-xl border overflow-hidden flex flex-col" style="background:var(--card); border-color:var(--border)">
+      <div class="px-5 py-4 border-b flex items-center justify-between flex-shrink-0" style="border-color:var(--border)">
+        <div class="flex items-center gap-2">
+          <div class="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(96,165,250,.1)">
+            <svg class="w-3.5 h-3.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <h2 class="text-sm font-semibold text-rose-sand">Sessions récentes</h2>
+        </div>
+        <a href="/ui/sessions"
+           class="text-xs text-rose-sand/40 hover:text-rose-dust transition-colors flex items-center gap-1">
+          Voir tout
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+          </svg>
+        </a>
+      </div>
 
+      <div class="flex-1 overflow-y-auto min-h-0">
+        {% if sessions %}
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="pl-5">Brief</th>
+              <th>Status</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in sessions %}
+            <tr class="clickable" onclick="location.href='/ui/sessions/{{ s.id }}'">
+              <td class="pl-5" style="max-width:0">
+                <span class="block truncate text-rose-sand/70" style="max-width:280px">{{ s.brief }}</span>
+              </td>
+              <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
+              <td class="text-xs text-rose-sand/40 tabular-nums">{{ s.created_at }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="flex flex-col items-center justify-center py-16 text-center px-6">
+          <div class="w-12 h-12 rounded-xl flex items-center justify-center mb-4" style="background:var(--input)">
+            <svg class="w-5 h-5 text-rose-sand/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+            </svg>
+          </div>
+          <p class="text-sm text-rose-sand/40">Aucune session</p>
+          <p class="text-xs text-rose-sand/20 mt-1">Lancez votre première analyse à gauche.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
 </div>
-
-<!-- Run result (filled by HTMX) -->
-<div id="run-result"></div>
-
 {% endblock %}

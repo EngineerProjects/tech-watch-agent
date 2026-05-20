@@ -250,7 +250,7 @@ class VectorStore:
 
             if filter_metadata:
                 for key, value in filter_metadata.items():
-                    where_clauses.append(f"metadata->>:key = :val_{key}")
+                    where_clauses.append(f"metadata->>'{key}' = :val_{key}")
 
             where_sql = " AND ".join(where_clauses)
 

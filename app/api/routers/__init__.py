@@ -11,6 +11,7 @@ from app.api.routers.research import router as research_router
 from app.api.routers.sessions import router as sessions_router
 from app.api.routers.tools import router as tools_router
 from app.api.routers.llm import router as llm_router
+from app.api.routers.watch_profiles import router as watch_profiles_router
 
 __all__ = [
     "health_router",
@@ -22,4 +23,5 @@ __all__ = [
     "sessions_router",
     "tools_router",
     "llm_router",
+    "watch_profiles_router",
 ]

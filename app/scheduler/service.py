@@ -194,6 +194,7 @@ class OrchestratorScheduler:
         topics: Optional[list[str]] = None,
         send_email: bool = True,
         autonomous: bool = True,
+        watch_context: Optional[object] = None,
     ) -> dict:
         """Run a research task through the orchestrator.
 
@@ -214,7 +215,7 @@ class OrchestratorScheduler:
         self.runtime.last_error = None
 
         if self.mode == "v2":
-            return await self._run_v2(task or "", topics, send_email, start)
+            return await self._run_v2(task or "", topics, send_email, start, watch_context)
         else:
             return await self._run_v1(topics, send_email, start)
 
@@ -224,16 +225,21 @@ class OrchestratorScheduler:
         topics: Optional[list[str]],
         send_email: bool,
         start: datetime,
+        watch_context: Optional[object] = None,
     ) -> dict:
         if not task:
             task = f"Weekly tech watch: {', '.join(topics or self.settings.newsletter_topics)}"
 
+        payload: dict = {
+            "task": task,
+            "topics": topics or self.settings.newsletter_topics,
+            "send_email": send_email,
+        }
+        if watch_context is not None:
+            payload["watch_context"] = watch_context
+
         try:
-            result = await self._orchestrator.execute({
-                "task": task,
-                "topics": topics or self.settings.newsletter_topics,
-                "send_email": send_email,
-            })
+            result = await self._orchestrator.execute(payload)
 
             execution_time = (datetime.now() - start).total_seconds()
 
@@ -263,6 +269,7 @@ class OrchestratorScheduler:
 
                 return {
                     "success": True,
+                    "session_id": output.get("session_id") or (str(result.session_id) if result.session_id else None),
                     "report": report,
                     "subject": subject,
                     "email_sent": output.get("email_sent", False),

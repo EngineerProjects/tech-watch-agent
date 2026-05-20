@@ -12,6 +12,41 @@ def _parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+# Runtime overrides loaded from DB at startup (key → raw string value).
+# DB values override env vars; get_settings() picks them up automatically
+# because set_db_overrides() clears the lru_cache.
+_DB_OVERRIDES: dict[str, str] = {}
+
+
+def set_db_overrides(overrides: dict[str, str]) -> None:
+    """Replace DB overrides and invalidate the settings cache."""
+    global _DB_OVERRIDES
+    _DB_OVERRIDES = {k: v for k, v in overrides.items() if v is not None}
+    get_settings.cache_clear()
+
+
+def _apply_overrides(kwargs: dict) -> dict:
+    """Merge _DB_OVERRIDES into env-resolved kwargs (DB wins over env)."""
+    for key, raw in _DB_OVERRIDES.items():
+        if key not in kwargs:
+            continue
+        current = kwargs[key]
+        try:
+            if isinstance(current, bool):
+                kwargs[key] = raw.lower() in ("1", "true", "yes")
+            elif isinstance(current, int):
+                kwargs[key] = int(raw)
+            elif isinstance(current, float):
+                kwargs[key] = float(raw)
+            elif isinstance(current, list):
+                kwargs[key] = _parse_csv(raw)
+            else:
+                kwargs[key] = raw
+        except (ValueError, AttributeError):
+            pass
+    return kwargs
+
+
 @dataclass(slots=True)
 class Settings:
     app_env: str = "development"
@@ -64,6 +99,11 @@ class Settings:
 
     tavily_api_key: str = ""
     serper_api_key: str = ""
+    # Search providers (used by NewsSearchService fallback chain)
+    searxng_url: str = "http://localhost:8080"
+    exa_api_key: str = ""
+    langsearch_api_key: str = ""
+    jina_api_key: str = ""
     scrapling_fetcher: str = "basic"
     scrapling_timeout: int = 30
     scrapling_max_content_length: int = 50000
@@ -85,7 +125,7 @@ class Settings:
         # all environment parsing in one place.
         load_dotenv(dotenv_path=env_file, override=False)
 
-        return cls(
+        kwargs: dict = dict(
             app_env=os.getenv("APP_ENV", "development"),
             app_host=os.getenv("APP_HOST", "0.0.0.0"),
             app_port=int(os.getenv("APP_PORT", "8000")),
@@ -124,6 +164,10 @@ class Settings:
             gmail_token_path=os.getenv("GMAIL_TOKEN_PATH", "token.json"),
             tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
             serper_api_key=os.getenv("SERPER_API_KEY", ""),
+            searxng_url=os.getenv("SEARXNG_URL", "http://localhost:8080"),
+            exa_api_key=os.getenv("EXA_API_KEY", ""),
+            langsearch_api_key=os.getenv("LANGSEARCH_API_KEY", ""),
+            jina_api_key=os.getenv("JINA_API_KEY", ""),
             scrapling_fetcher=os.getenv("SCRAPLING_FETCHER", "basic"),
             scrapling_timeout=int(os.getenv("SCRAPLING_TIMEOUT", "30")),
             scrapling_max_content_length=int(os.getenv("SCRAPLING_MAX_CONTENT_LENGTH", "50000")),
@@ -138,6 +182,7 @@ class Settings:
             schedule_times=_parse_csv(os.getenv("SCHEDULE_TIMES", "08:00,18:00")),
             timezone=os.getenv("TIMEZONE", "Europe/Paris"),
         )
+        return cls(**_apply_overrides(kwargs))
 
     @property
     def has_llm_credentials(self) -> bool:

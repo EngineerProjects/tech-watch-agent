@@ -34,6 +34,7 @@ async def run_orchestrator(payload: OrchestratorRequest) -> OrchestratorResponse
 
         return OrchestratorResponse(
             success=result.get("success", False),
+            session_id=result.get("session_id"),
             report=result.get("report"),
             subject=result.get("subject"),
             email_sent=result.get("email_sent", False),

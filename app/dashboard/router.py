@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
 import markdown2
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from app.config.settings import get_settings
@@ -89,6 +90,40 @@ async def _get_sessions(limit: int = 50, status: Optional[str] = None) -> list[d
         return []
 
 
+async def _get_watch_profiles() -> list[dict]:
+    try:
+        from app.db.base import async_session_factory
+        from app.db.repositories import WatchProfileRepository
+
+        async with async_session_factory() as db:
+            repo = WatchProfileRepository(db)
+            rows = await repo.list_all(active_only=False)
+            return [
+                {
+                    "id": str(p.id),
+                    "name": p.name,
+                    "topics": list(p.topics or []),
+                    "depth": p.depth,
+                    "format": p.format,
+                    "angle": p.angle,
+                    "sources": list(p.sources or []),
+                    "language": p.language,
+                    "audience": p.audience,
+                    "focus": p.focus,
+                    "schedule_time": p.schedule_time,
+                    "schedule_days": list(p.schedule_days or []),
+                    "is_active": p.is_active,
+                    "last_run_at": p.last_run_at.isoformat() if p.last_run_at else None,
+                    "created_at": p.created_at.isoformat() if p.created_at else "",
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else "",
+                }
+                for p in rows
+            ]
+    except Exception as exc:
+        logger.warning("Watch profiles unavailable: %s", exc)
+        return []
+
+
 async def _get_newsletter_history(limit: int = 30) -> list[dict]:
     try:
         from app.db.base import async_session_factory
@@ -121,9 +156,9 @@ async def dashboard_home(request: Request) -> HTMLResponse:
     stats = await _get_stats()
     sessions = await _get_sessions(limit=6)
     return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
+        request=request,
+        name="index.html",
+        context={
             "stats": stats,
             "sessions": sessions,
             "default_topics": ", ".join(settings.newsletter_topics),
@@ -136,9 +171,9 @@ async def dashboard_home(request: Request) -> HTMLResponse:
 async def sessions_page(request: Request, status: Optional[str] = None) -> HTMLResponse:
     sessions = await _get_sessions(limit=50, status=status)
     return templates.TemplateResponse(
-        "sessions.html",
-        {
-            "request": request,
+        request=request,
+        name="sessions.html",
+        context={
             "sessions": sessions,
             "current_status": status or "all",
             "active": "sessions",
@@ -177,8 +212,9 @@ async def session_detail(request: Request, session_id: str) -> HTMLResponse:
         return HTMLResponse(f"<p>Erreur : {exc}</p>", status_code=500)
 
     return templates.TemplateResponse(
-        "session_detail.html",
-        {"request": request, "s": session_data, "active": "sessions"},
+        request=request,
+        name="session_detail.html",
+        context={"s": session_data, "active": "sessions"},
     )
 
 
@@ -187,13 +223,79 @@ async def newsletter_page(request: Request) -> HTMLResponse:
     settings = get_settings()
     history = await _get_newsletter_history()
     return templates.TemplateResponse(
-        "newsletter.html",
-        {
-            "request": request,
+        request=request,
+        name="newsletter.html",
+        context={
             "history": history,
             "default_topics": ", ".join(settings.newsletter_topics),
             "active": "newsletter",
         },
+    )
+
+
+@router.get("/watch-profiles", response_class=HTMLResponse)
+async def watch_profiles_page(request: Request) -> HTMLResponse:
+    profiles = await _get_watch_profiles()
+    return templates.TemplateResponse(
+        request=request,
+        name="watch_profiles.html",
+        context={"profiles": profiles, "active": "profiles"},
+    )
+
+
+async def _get_scheduled_profiles() -> tuple[list[dict], list[dict]]:
+    profiles = await _get_watch_profiles()
+    now = datetime.now()
+    scheduled, unscheduled = [], []
+    for p in profiles:
+        if p["schedule_time"]:
+            try:
+                h, m = map(int, p["schedule_time"].split(":"))
+                next_run = now.replace(hour=h, minute=m, second=0, microsecond=0)
+                if next_run <= now:
+                    next_run += timedelta(days=1)
+                delta = next_run - now
+                hours, rem = divmod(int(delta.total_seconds()), 3600)
+                minutes = rem // 60
+                p["next_run"] = next_run.strftime("%d/%m %H:%M")
+                p["next_run_in"] = f"{hours}h {minutes}min" if hours else f"{minutes} min"
+            except Exception:
+                p["next_run"] = None
+                p["next_run_in"] = None
+            scheduled.append(p)
+        else:
+            p["next_run"] = None
+            p["next_run_in"] = None
+            unscheduled.append(p)
+    return sorted(scheduled, key=lambda x: x["schedule_time"]), unscheduled
+
+
+@router.get("/scheduler", response_class=HTMLResponse)
+async def scheduler_page(request: Request) -> HTMLResponse:
+    scheduled, unscheduled = await _get_scheduled_profiles()
+    return templates.TemplateResponse(
+        request=request,
+        name="scheduler.html",
+        context={"scheduled": scheduled, "unscheduled": unscheduled, "active": "scheduler"},
+    )
+
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request) -> HTMLResponse:
+    s = get_settings()
+    tools_status = [
+        {"name": "SearXNG", "ok": bool(s.searxng_url), "status": s.searxng_url or "Non configuré"},
+        {"name": "Tavily", "ok": bool(s.tavily_api_key), "status": "Configuré" if s.tavily_api_key else "Clé manquante"},
+        {"name": "Exa", "ok": bool(s.exa_api_key), "status": "Configuré" if s.exa_api_key else "Clé manquante"},
+        {"name": "LangSearch", "ok": bool(s.langsearch_api_key), "status": "Configuré" if s.langsearch_api_key else "Clé manquante"},
+        {"name": "Jina Reader", "ok": True, "status": "Libre (sans clé)"},
+        {"name": "Gmail", "ok": bool(s.sender_email), "status": s.sender_email or "Non configuré"},
+        {"name": "LLM", "ok": bool(s.llm_api_key), "status": s.llm_model or "Modèle non défini"},
+    ]
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        context={"s": s, "tools_status": tools_status, "active": "settings"},
     )
 
 
@@ -203,7 +305,7 @@ async def newsletter_page(request: Request) -> HTMLResponse:
 async def stats_partial(request: Request) -> HTMLResponse:
     stats = await _get_stats()
     return templates.TemplateResponse(
-        "partials/stats.html", {"request": request, "stats": stats}
+        request=request, name="partials/stats.html", context={"stats": stats}
     )
 
 
@@ -213,7 +315,7 @@ async def sessions_partial(
 ) -> HTMLResponse:
     sessions = await _get_sessions(limit=50, status=status)
     return templates.TemplateResponse(
-        "partials/session_rows.html", {"request": request, "sessions": sessions}
+        request=request, name="partials/session_rows.html", context={"sessions": sessions}
     )
 
 
@@ -242,8 +344,9 @@ async def launch_run(
         result = {"success": False, "errors": [str(exc)]}
 
     return templates.TemplateResponse(
-        "partials/run_result.html",
-        {"request": request, "result": result, "task": task},
+        request=request,
+        name="partials/run_result.html",
+        context={"result": result, "task": task},
     )
 
 
@@ -277,11 +380,52 @@ async def launch_newsletter(
         error = str(exc)
 
     return templates.TemplateResponse(
-        "partials/newsletter_result.html",
-        {
-            "request": request,
+        request=request,
+        name="partials/newsletter_result.html",
+        context={
             "result": result,
             "email_sent": email_sent,
             "error": error,
         },
     )
+
+
+@router.post("/_settings")
+async def save_setting(request: Request) -> JSONResponse:
+    data = await request.json()
+    key = data.get("key", "")
+    value = data.get("value", "")
+    if not key:
+        return JSONResponse({"ok": False, "error": "Missing key"})
+    try:
+        from app.db.base import async_session_factory
+        from app.db.repositories import AppConfigRepository
+
+        async with async_session_factory() as db:
+            repo = AppConfigRepository(db)
+            await repo.set(key, str(value))
+            await db.commit()
+            all_overrides = await repo.get_all()
+
+        from app.config.settings import set_db_overrides
+        set_db_overrides(all_overrides)
+        return JSONResponse({"ok": True})
+    except Exception as exc:
+        logger.error("Save setting failed: %s", exc)
+        return JSONResponse({"ok": False, "error": str(exc)})
+
+
+@router.post("/_test-searxng")
+async def test_searxng(request: Request) -> JSONResponse:
+    data = await request.json()
+    url = data.get("url", "") or get_settings().searxng_url
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(f"{url}/search", params={"q": "test", "format": "json"})
+            results = r.json().get("results", [])
+            return JSONResponse({"ok": True, "results": len(results)})
+    except Exception as exc:
+        logger.warning("SearXNG test failed: %s", exc)
+        return JSONResponse({"ok": False, "error": str(exc), "results": 0})

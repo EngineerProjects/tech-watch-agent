@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
+    AppConfig,
     Article,
     NewsletterRun,
     NewsletterRunArticle,
@@ -27,7 +28,41 @@ from app.db.models import (
     ToolExecution,
     User,
     UserTopic,
+    WatchProfile,
 )
+
+
+class AppConfigRepository:
+    """Key-value store for runtime configuration overrides."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get(self, key: str) -> str | None:
+        result = await self.session.get(AppConfig, key)
+        return result.value if result else None
+
+    async def get_all(self) -> dict[str, str]:
+        result = await self.session.execute(select(AppConfig))
+        return {row.key: row.value for row in result.scalars() if row.value is not None}
+
+    async def set(self, key: str, value: str, description: str | None = None) -> None:
+        existing = await self.session.get(AppConfig, key)
+        if existing:
+            existing.value = value
+        else:
+            self.session.add(AppConfig(key=key, value=value, description=description))
+        await self.session.flush()
+
+    async def bulk_set(self, updates: dict[str, str]) -> None:
+        for key, value in updates.items():
+            await self.set(key, value)
+
+    async def delete(self, key: str) -> None:
+        existing = await self.session.get(AppConfig, key)
+        if existing:
+            await self.session.delete(existing)
+            await self.session.flush()
 
 
 class ArticleRepository:
@@ -484,3 +519,49 @@ class ToolExecutionRepository:
             name: {"count": count, "avg_time": avg_time}
             for name, count, avg_time in result.all()
         }
+
+
+class WatchProfileRepository:
+    """CRUD repository for WatchProfile entities."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(self, profile: WatchProfile) -> WatchProfile:
+        self.session.add(profile)
+        await self.session.flush()
+        await self.session.refresh(profile)
+        return profile
+
+    async def get_by_id(self, profile_id: uuid.UUID) -> Optional[WatchProfile]:
+        result = await self.session.execute(
+            select(WatchProfile).where(WatchProfile.id == profile_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_all(self, active_only: bool = False) -> Sequence[WatchProfile]:
+        query = select(WatchProfile)
+        if active_only:
+            query = query.where(WatchProfile.is_active.is_(True))
+        query = query.order_by(WatchProfile.created_at.desc())
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def update(self, profile: WatchProfile) -> WatchProfile:
+        await self.session.flush()
+        await self.session.refresh(profile)
+        return profile
+
+    async def delete(self, profile_id: uuid.UUID) -> bool:
+        profile = await self.get_by_id(profile_id)
+        if not profile:
+            return False
+        await self.session.delete(profile)
+        await self.session.flush()
+        return True
+
+    async def touch_last_run(self, profile_id: uuid.UUID) -> None:
+        profile = await self.get_by_id(profile_id)
+        if profile:
+            profile.last_run_at = datetime.utcnow()
+            await self.session.flush()

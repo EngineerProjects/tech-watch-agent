@@ -1,13 +1,24 @@
 {% if sessions %}
 {% for s in sessions %}
-<tr class="clickable" onclick="location.href='/ui/sessions/{{ s.id }}'">
-  <td>{{ s.brief }}</td>
-  <td><span class="badge badge-{{ s.status }}">{{ s.status }}</span></td>
-  <td>{{ s.phase }}</td>
-  <td>{{ s.created_at }}</td>
-  <td>{{ s.completed_at }}</td>
+<tr class="clickable border-b" style="border-color:rgba(212,165,165,.04)"
+    onclick="location.href='/ui/sessions/{{ s.id }}'">
+  <td class="px-5 py-3">
+    <span class="text-sm text-rose-sand/80 leading-snug block truncate" style="max-width:360px">{{ s.brief }}</span>
+  </td>
+  <td class="px-4 py-3 whitespace-nowrap">
+    <span class="badge badge-{{ s.status }}">{{ s.status }}</span>
+  </td>
+  <td class="px-4 py-3 whitespace-nowrap">
+    <code class="text-[11px] text-rose-sand/40 bg-zinc-800/60 px-2 py-0.5 rounded">{{ s.phase }}</code>
+  </td>
+  <td class="px-4 py-3 whitespace-nowrap text-xs text-rose-sand/40">{{ s.created_at }}</td>
+  <td class="px-4 py-3 whitespace-nowrap text-xs text-rose-sand/30">{{ s.completed_at }}</td>
 </tr>
 {% endfor %}
 {% else %}
-<tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">Aucune session.</td></tr>
+<tr>
+  <td colspan="5" class="px-5 py-12 text-center">
+    <p class="text-sm text-rose-sand/30">Aucune session correspondant aux filtres.</p>
+  </td>
+</tr>
 {% endif %}

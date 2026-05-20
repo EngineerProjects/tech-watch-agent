@@ -5,7 +5,7 @@ services:
     ports:
       - "6380:6379"
     volumes:
-      - redis_data:/data
+      - ../.volumes/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -31,11 +31,12 @@ services:
       DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
       DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
       REDIS_URL: redis://redis:6379
+      SEARXNG_URL: http://host.docker.internal:8080
     depends_on:
       redis:
         condition: service_healthy
     volumes:
-      - logs_data:/app/logs
+      - ../.volumes/logs:/app/logs
     ports:
       - "8000:8000"
     healthcheck:
@@ -70,11 +71,12 @@ services:
       DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
       DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
       REDIS_URL: redis://redis:6379
+      SEARXNG_URL: http://host.docker.internal:8080
     depends_on:
       redis:
         condition: service_healthy
     volumes:
-      - logs_data:/app/logs
+      - ../.volumes/logs:/app/logs
     command: >
       sh -c "
         alembic upgrade head &&
@@ -100,11 +102,12 @@ services:
       DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
       DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
       REDIS_URL: redis://redis:6379
+      SEARXNG_URL: http://host.docker.internal:8080
     depends_on:
       redis:
         condition: service_healthy
     volumes:
-      - logs_data:/app/logs
+      - ../.volumes/logs:/app/logs
     command: >
       sh -c "
         alembic upgrade head &&
@@ -117,10 +120,6 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       - tech-watch-network
-
-volumes:
-  redis_data:
-  logs_data:
 
 networks:
   tech-watch-network:

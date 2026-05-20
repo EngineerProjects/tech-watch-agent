@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Optional
-from dataclasses import dataclass, field
+import uuid
 
 from app.agents.base.base_agent import BaseAgent, AgentConfig, AgentResult
 from app.agents.orchestrator.config import OrchestratorConfig
@@ -80,7 +80,11 @@ class OrchestratorAgent(BaseAgent):
         logger.info("Setting up orchestrator agent")
 
         if self._nodes is None:
-            self._nodes = OrchestratorNodes(max_articles=5, min_sources=2)
+            self._nodes = OrchestratorNodes(
+                max_articles=5,
+                min_sources=2,
+                enable_session_persistence=self._config.enable_checkpointing,
+            )
 
         graph_builder = OrchestratorGraphBuilder(
             nodes=self._nodes,
@@ -130,6 +134,23 @@ class OrchestratorAgent(BaseAgent):
 
         logger.info("Orchestrator starting task: %s", task[:100])
 
+        session_uuid: Optional[uuid.UUID] = None
+        if session_id:
+            try:
+                session_uuid = uuid.UUID(session_id)
+            except ValueError:
+                logger.warning("Invalid session_id '%s', creating a new session", session_id)
+
+        if session_uuid is None:
+            from app.services.session_manager import create_session as create_research_session
+
+            session_uuid = await create_research_session(task=task, topics=topics)
+            session_id = str(session_uuid)
+
+        if self._nodes is not None:
+            self._nodes._session_id = str(session_uuid)
+            self._nodes._session_manager = None
+
         memory_info = ""
         if memory_context:
             recent = memory_context.get("recent_articles", [])
@@ -147,10 +168,13 @@ class OrchestratorAgent(BaseAgent):
             await self.setup()
 
             result_state = await self._graph.ainvoke({
+                "session_id": str(session_uuid),
                 "task": task,
-                "task_id": f"orch_{datetime.now().timestamp()}",
+                "research_brief": task,
+                "task_id": f"orch_{session_uuid}",
                 "topics": topics or [],
                 "send_email": send_email,
+                "metadata": {"topics": topics or []},
                 "plan": [],
                 "current_step_index": 0,
                 "articles": [],
@@ -172,6 +196,9 @@ class OrchestratorAgent(BaseAgent):
                 "completed_at": None,
                 "approval_threshold": self._config.approval_threshold,
                 "autonomous": self._config.autonomous,
+                "plan_attempts": 0,
+                "max_plan_retries": 3,
+                "resumed_from_checkpoint": False,
             })
 
             execution_time = (datetime.now() - start_time).total_seconds()
@@ -192,6 +219,7 @@ class OrchestratorAgent(BaseAgent):
                 "execution_time_seconds": execution_time,
                 "iteration_count": result_state.get("iteration_count", 0),
                 "validation_errors": result_state.get("validation_errors", []),
+                "session_id": str(session_uuid),
             }
 
             if not report:
@@ -208,6 +236,7 @@ class OrchestratorAgent(BaseAgent):
 
             return AgentResult.create_success(
                 output={
+                    "session_id": str(session_uuid),
                     "report": report,
                     "email_sent": email_sent,
                     "email_result": email_result,
@@ -215,6 +244,7 @@ class OrchestratorAgent(BaseAgent):
                     "plan": result_state.get("plan", []),
                 },
                 metadata=metadata,
+                session_id=session_uuid,
             )
 
         except Exception as exc:
@@ -225,6 +255,7 @@ class OrchestratorAgent(BaseAgent):
                 metadata={
                     "task": task[:200],
                     "execution_time_seconds": execution_time,
+                    "session_id": str(session_uuid) if session_uuid else None,
                 },
             )
 

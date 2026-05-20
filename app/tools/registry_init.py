@@ -30,7 +30,7 @@ def initialize_tools() -> None:
                 register_tool(tool)
                 tools_registered += 1
                 logger.info("Registered Tavily search tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.debug(f"Tavily not available: {e}")
     
     try:
@@ -38,7 +38,7 @@ def initialize_tools() -> None:
         register_tool(OpenAlexTool())
         tools_registered += 1
         logger.info("Registered OpenAlex tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.debug(f"OpenAlex not available: {e}")
     
     try:
@@ -46,7 +46,7 @@ def initialize_tools() -> None:
         register_tool(GoogleScholarTool())
         tools_registered += 1
         logger.info("Registered Google Scholar tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.debug(f"Google Scholar not available: {e}")
     
     try:
@@ -54,7 +54,7 @@ def initialize_tools() -> None:
         register_tool(ThinkTool())
         tools_registered += 1
         logger.info("Registered Think tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.debug(f"Think tool not available: {e}")
     
     try:
@@ -62,7 +62,7 @@ def initialize_tools() -> None:
         register_tool(ContentExtractorTool())
         tools_registered += 1
         logger.info("Registered Content Extractor tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.debug(f"Content Extractor not available: {e}")
     
     # Social/Monitoring Tools
@@ -71,7 +71,7 @@ def initialize_tools() -> None:
         register_tool(GitHubTool())
         tools_registered += 1
         logger.info("Registered GitHub tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import GitHubTool: {e}")
     
     try:
@@ -79,7 +79,7 @@ def initialize_tools() -> None:
         register_tool(RedditTool())
         tools_registered += 1
         logger.info("Registered Reddit tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import RedditTool: {e}")
     
     try:
@@ -87,7 +87,7 @@ def initialize_tools() -> None:
         register_tool(ArXivTool())
         tools_registered += 1
         logger.info("Registered ArXiv tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import ArXivTool: {e}")
     
     try:
@@ -95,7 +95,7 @@ def initialize_tools() -> None:
         register_tool(ResearchPaperTool())
         tools_registered += 1
         logger.info("Registered Research Paper tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import ResearchPaperTool: {e}")
     
     try:
@@ -103,7 +103,7 @@ def initialize_tools() -> None:
         register_tool(YouTubeTool())
         tools_registered += 1
         logger.info("Registered YouTube tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import YouTubeTool: {e}")
 
     # Memory/RAG Tools
@@ -112,7 +112,7 @@ def initialize_tools() -> None:
         register_tool(SearchMemoryTool())
         tools_registered += 1
         logger.info("Registered SearchMemory tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import SearchMemoryTool: {e}")
 
     try:
@@ -120,7 +120,7 @@ def initialize_tools() -> None:
         register_tool(GetRecentContextTool())
         tools_registered += 1
         logger.info("Registered GetRecentContext tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import GetRecentContextTool: {e}")
 
     try:
@@ -128,7 +128,7 @@ def initialize_tools() -> None:
         register_tool(StoreResearchContextTool())
         tools_registered += 1
         logger.info("Registered StoreResearchContext tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import StoreResearchContextTool: {e}")
 
     # Delivery Tools
@@ -144,7 +144,7 @@ def initialize_tools() -> None:
         register_tool(email_preview_tool)
         tools_registered += 1
         logger.info("Registered Email Preview tool")
-    except ImportError as e:
+    except (ImportError, ValueError) as e:
         logger.warning(f"Could not import Email tools: {e}")
 
     logger.info(f"Tool initialization complete: {tools_registered} tools registered")

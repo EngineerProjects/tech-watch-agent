@@ -1,98 +1,164 @@
 {% extends "base.html" %}
 {% block title %}Newsletter — Tech Watch Agent{% endblock %}
+{% block page_title %}Newsletter{% endblock %}
 
 {% block content %}
-<h2>Newsletter</h2>
+<div class="p-6 space-y-5 w-full">
 
-<div class="two-col" style="margin-bottom:2rem">
+  <!-- Top cards -->
+  <div class="grid grid-cols-1 gap-5 xl:grid-cols-2">
 
-  <!-- Generate form -->
-  <article>
-    <header><strong>📧 Générer une newsletter</strong></header>
-    <form hx-post="/ui/_newsletter"
-          hx-target="#newsletter-result"
-          hx-swap="innerHTML"
-          hx-indicator="#nl-spinner">
-      <label>
-        Topics <small class="muted">(séparés par des virgules)</small>
-        <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM, agents…">
-      </label>
-      <label>
-        <input type="checkbox" name="send_email" value="true" role="switch">
-        Envoyer par email après génération
-      </label>
-      <div style="display:flex;align-items:center;gap:1rem">
-        <button type="submit" hx-disabled-elt="this">📧 Générer</button>
-        <span id="nl-spinner" class="htmx-indicator muted">
-          <span class="spinner"></span> Génération en cours…
-        </span>
+    <!-- Generate form -->
+    <div class="rounded-xl border overflow-hidden" style="background:var(--card); border-color:var(--border)"
+         x-data="{ emailOn: false }">
+      <div class="px-5 py-4 border-b flex items-center gap-2" style="border-color:var(--border)">
+        <div class="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(167,139,250,.1)">
+          <svg class="w-3.5 h-3.5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <h2 class="text-sm font-semibold text-rose-sand">Générer une newsletter</h2>
       </div>
-    </form>
+      <div class="p-5">
+        <form hx-post="/ui/_newsletter"
+              hx-target="#newsletter-result"
+              hx-swap="innerHTML"
+              hx-indicator="#nl-spinner"
+              class="space-y-4">
+          <div>
+            <label class="form-label">Topics <span style="color:#52525b">(séparés par virgules)</span></label>
+            <input type="text" name="topics" value="{{ default_topics }}" placeholder="AI, LLM, agents…" class="form-input">
+          </div>
+          <label class="flex items-center gap-3 cursor-pointer select-none">
+            <div class="relative flex items-center">
+              <input type="checkbox" name="send_email" value="true" x-model="emailOn" class="sr-only">
+              <div :style="emailOn ? 'background:var(--accent-dark)' : 'background:#3f3f46'"
+                   class="toggle-track" @click="emailOn=!emailOn">
+                <div :style="emailOn ? 'transform:translateX(16px)' : 'transform:translateX(0)'"
+                     class="toggle-thumb"></div>
+              </div>
+            </div>
+            <span class="text-sm text-rose-sand/70">Envoyer par email après génération</span>
+          </label>
+          <div class="flex items-center gap-3">
+            <button type="submit"
+              class="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg transition-colors text-white"
+              style="background:var(--accent-dark)"
+              onmouseover="this.style.background='var(--accent-hov)'"
+              onmouseout="this.style.background='var(--accent-dark)'">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/>
+              </svg>
+              Générer
+            </button>
+            <span id="nl-spinner" class="htmx-indicator text-rose-sand/40 text-xs">
+              <svg class="w-4 h-4 spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-70" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/>
+              </svg>
+              Génération en cours…
+            </span>
+          </div>
+        </form>
+        <div id="newsletter-result"></div>
+      </div>
+    </div>
 
-    <div id="newsletter-result"></div>
-  </article>
+    <!-- Stats card -->
+    <div class="rounded-xl border overflow-hidden" style="background:var(--card); border-color:var(--border)">
+      <div class="px-5 py-4 border-b flex items-center gap-2" style="border-color:var(--border)">
+        <div class="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style="background:rgba(96,165,250,.1)">
+          <svg class="w-3.5 h-3.5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+          </svg>
+        </div>
+        <h2 class="text-sm font-semibold text-rose-sand">Statistiques</h2>
+      </div>
+      <div class="p-5">
+        {% if history %}
+        {% set delivered = history | selectattr('delivery_success', 'equalto', true) | list %}
+        <div class="space-y-3">
+          <div class="flex items-center justify-between py-2.5 border-b" style="border-color:var(--border)">
+            <span class="text-sm text-rose-sand/50">Total runs</span>
+            <span class="text-sm font-semibold text-rose-sand tabular-nums">{{ history|length }}</span>
+          </div>
+          <div class="flex items-center justify-between py-2.5 border-b" style="border-color:var(--border)">
+            <span class="text-sm text-rose-sand/50">Emails envoyés</span>
+            <span class="text-sm font-semibold text-green-400 tabular-nums">{{ delivered|length }}</span>
+          </div>
+          <div class="flex items-center justify-between py-2.5">
+            <span class="text-sm text-rose-sand/50">Taux de livraison</span>
+            <div class="flex items-center gap-2">
+              <div class="w-24 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                <div class="h-full rounded-full bg-indigo-500"
+                     style="width: {{ ((delivered|length / history|length) * 100)|round|int }}%"></div>
+              </div>
+              <span class="text-sm font-semibold text-rose-sand tabular-nums">
+                {{ ((delivered|length / history|length) * 100)|round|int }}%
+              </span>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="flex flex-col items-center justify-center py-10 text-center">
+          <svg class="w-8 h-8 text-rose-sand/20 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+          </svg>
+          <p class="text-sm text-rose-sand/30">Aucune donnée disponible.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
 
-  <!-- Stats -->
-  <article>
-    <header><strong>📊 Statistiques</strong></header>
-    {% if history %}
-    {% set delivered = history | selectattr('delivery_success', 'equalto', true) | list %}
-    <dl>
-      <div style="display:flex;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid var(--pico-muted-border-color)">
-        <dt class="muted">Total runs</dt><dd><strong>{{ history|length }}</strong></dd>
-      </div>
-      <div style="display:flex;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid var(--pico-muted-border-color)">
-        <dt class="muted">Emails envoyés</dt><dd><strong>{{ delivered|length }}</strong></dd>
-      </div>
-      <div style="display:flex;justify-content:space-between;padding:.5rem 0">
-        <dt class="muted">Taux de livraison</dt>
-        <dd><strong>{{ ((delivered|length / history|length) * 100)|round|int }}%</strong></dd>
-      </div>
-    </dl>
-    {% else %}
-    <p class="muted">Aucune donnée disponible.</p>
-    {% endif %}
-  </article>
+  </div>
+
+  <!-- History table -->
+  <div class="rounded-xl border overflow-hidden" style="background:var(--card); border-color:var(--border)">
+    <div class="px-5 py-4 border-b flex items-center gap-2" style="border-color:var(--border)">
+      <h2 class="text-sm font-semibold text-rose-sand/80">Historique</h2>
+      {% if history %}
+      <span class="text-xs text-rose-sand/30 ml-auto">{{ history|length }} run(s)</span>
+      {% endif %}
+    </div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th class="pl-5" style="width:40%">Sujet</th>
+          <th>Status</th>
+          <th>Articles</th>
+          <th>Email</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if history %}
+        {% for r in history %}
+        <tr>
+          <td class="pl-5" style="max-width:0">
+            <span class="block truncate text-rose-sand/70" style="max-width:300px">{{ r.subject }}</span>
+          </td>
+          <td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td>
+          <td class="text-xs text-rose-sand/50 tabular-nums">{{ r.articles_count }}</td>
+          <td>
+            {% if r.delivery_success %}
+            <span class="badge badge-true">✓ envoyé</span>
+            {% else %}
+            <span class="badge badge-false">non envoyé</span>
+            {% endif %}
+          </td>
+          <td class="text-xs text-rose-sand/40 tabular-nums">{{ r.started_at }}</td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr>
+          <td colspan="5" class="px-5 py-12 text-center">
+            <p class="text-sm text-rose-sand/30">Aucun historique disponible.</p>
+          </td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
 
 </div>
-
-<!-- History table -->
-<article style="padding:0;overflow:hidden">
-  <table style="margin:0">
-    <thead>
-      <tr>
-        <th>Sujet</th>
-        <th>Status</th>
-        <th>Articles</th>
-        <th>Email</th>
-        <th>Date</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% if history %}
-      {% for r in history %}
-      <tr>
-        <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.subject }}</td>
-        <td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td>
-        <td>{{ r.articles_count }}</td>
-        <td>
-          {% if r.delivery_success %}
-          <span class="badge badge-true">✓ envoyé</span>
-          {% else %}
-          <span class="badge badge-false">non envoyé</span>
-          {% endif %}
-        </td>
-        <td><small class="muted">{{ r.started_at }}</small></td>
-      </tr>
-      {% endfor %}
-      {% else %}
-      <tr><td colspan="5" class="muted" style="text-align:center;padding:2rem">Aucun historique disponible.</td></tr>
-      {% endif %}
-    </tbody>
-  </table>
-</article>
-{% if history %}
-<p class="muted" style="font-size:.8rem;margin-top:.5rem">{{ history|length }} run(s) affiché(s)</p>
-{% endif %}
-
 {% endblock %}

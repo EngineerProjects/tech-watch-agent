@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+{% block title %}Programmation — Tech Watch Agent{% endblock %}
+{% block page_title %}Programmation{% endblock %}
+
+{% block topbar_actions %}
+<a href="/ui/watch-profiles"
+   class="btn btn-secondary text-xs">
+  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+  </svg>
+  Gérer les profils
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="p-6 space-y-6 w-full">
+
+  <!-- Status banner -->
+  <div class="rounded-xl p-4 border flex items-center gap-4"
+       style="background:rgba(212,165,165,.04); border-color:var(--border)">
+    <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+         style="background:rgba(212,165,165,.12)">
+      <svg class="w-5 h-5" style="color:var(--accent)" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+    </div>
+    <div class="flex-1">
+      <p class="text-sm font-semibold" style="color:var(--text)">Scheduler intégré actif</p>
+      <p class="text-xs mt-0.5" style="color:var(--text-muted)">
+        Le scheduler tourne en arrière-plan dans le processus API. Il vérifie toutes les minutes les profils actifs avec une heure programmée.
+        La date actuelle est injectée dans chaque exécution pour garantir des recherches à jour.
+      </p>
+    </div>
+    <div class="flex items-center gap-1.5 flex-shrink-0">
+      <span class="w-2 h-2 rounded-full bg-green-500" style="box-shadow:0 0 6px rgba(74,222,128,.6)"></span>
+      <span class="text-xs" style="color:var(--text-muted)">Actif</span>
+    </div>
+  </div>
+
+  <!-- Scheduled profiles -->
+  <div class="card">
+    <div class="card-header">
+      <svg class="w-4 h-4 opacity-60 flex-shrink-0" style="color:var(--accent)" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+      </svg>
+      <h2 class="text-sm font-semibold" style="color:var(--text)">Profils programmés</h2>
+      <span class="ml-auto text-xs" style="color:var(--text-faint)">{{ scheduled | length }} profil(s) avec horaire</span>
+    </div>
+
+    {% if scheduled %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th class="pl-5">Profil</th>
+          <th>Heure</th>
+          <th>Jours</th>
+          <th>Prochaine exécution</th>
+          <th>Dernière exécution</th>
+          <th>Statut</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in scheduled %}
+        <tr>
+          <td class="pl-5">
+            <div>
+              <p class="text-sm font-medium" style="color:var(--text)">{{ p.name }}</p>
+              <div class="flex flex-wrap gap-1 mt-1">
+                {% for topic in p.topics[:3] %}
+                <span class="text-[10px] px-1.5 py-0.5 rounded font-medium" style="background:rgba(212,165,165,.1); color:var(--accent)">{{ topic }}</span>
+                {% endfor %}
+                {% if p.topics | length > 3 %}<span class="text-[10px]" style="color:var(--text-faint)">+{{ p.topics|length - 3 }}</span>{% endif %}
+              </div>
+            </div>
+          </td>
+          <td>
+            <code class="text-sm font-mono font-semibold" style="color:var(--clay)">{{ p.schedule_time }}</code>
+          </td>
+          <td>
+            {% if p.schedule_days %}
+            <div class="flex gap-1 flex-wrap">
+              {% for day in p.schedule_days %}
+              <span class="badge badge-scheduled">{{ day[:3] }}</span>
+              {% endfor %}
+            </div>
+            {% else %}
+            <span class="text-xs" style="color:var(--text-faint)">Chaque jour</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if p.next_run %}
+            <div>
+              <p class="text-sm" style="color:var(--text)">{{ p.next_run }}</p>
+              <p class="text-[11px] mt-0.5" style="color:var(--text-faint)">dans {{ p.next_run_in }}</p>
+            </div>
+            {% else %}
+            <span style="color:var(--text-faint)">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if p.last_run_at %}
+            <span class="text-xs" style="color:var(--text-muted)">{{ p.last_run_at[:16] | replace('T', ' ') }}</span>
+            {% else %}
+            <span class="text-xs" style="color:var(--text-faint)">Jamais</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if p.is_active %}
+            <span class="badge badge-active">actif</span>
+            {% else %}
+            <span class="badge badge-false">inactif</span>
+            {% endif %}
+          </td>
+          <td class="pr-4">
+            <div class="flex items-center justify-end gap-2"
+                 x-data="{ running: false, done: false }">
+              <button
+                @click="runNow('{{ p.id }}', '{{ p.name }}')"
+                :disabled="running"
+                class="btn btn-secondary text-xs py-1 px-2.5">
+                <svg x-show="!running" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg>
+                <svg x-show="running" class="w-3 h-3 spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-70" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/></svg>
+                <span x-text="running ? 'En cours…' : (done ? '✓' : 'Lancer')"></span>
+              </button>
+              <a href="/ui/watch-profiles" class="btn btn-secondary text-xs py-1 px-2.5">Éditer</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="flex flex-col items-center justify-center py-16 text-center">
+      <div class="w-12 h-12 rounded-2xl flex items-center justify-center mb-4" style="background:rgba(212,165,165,.08)">
+        <svg class="w-6 h-6 opacity-40" style="color:var(--accent)" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+      </div>
+      <p class="text-sm font-medium" style="color:var(--text-muted)">Aucun profil avec une heure programmée</p>
+      <p class="text-xs mt-1 mb-4" style="color:var(--text-faint)">Configurez une heure dans un profil de veille pour l'activer.</p>
+      <a href="/ui/watch-profiles" class="btn btn-primary text-xs">Aller aux profils</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Unscheduled active profiles -->
+  {% if unscheduled %}
+  <div class="card">
+    <div class="card-header">
+      <svg class="w-4 h-4 opacity-60" style="color:var(--text-muted)" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="8" r="4"/><path stroke-linecap="round" stroke-linejoin="round" d="M4 20a8 8 0 0116 0"/>
+      </svg>
+      <h2 class="text-sm font-semibold" style="color:var(--text)">Profils sans horaire</h2>
+      <span class="ml-auto text-xs" style="color:var(--text-faint)">Exécution manuelle uniquement</span>
+    </div>
+    <div class="divide-y" style="divide-color:rgba(212,165,165,.04)">
+      {% for p in unscheduled %}
+      <div class="px-5 py-3 flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm" style="color:var(--text)">{{ p.name }}</p>
+          <div class="flex gap-1 mt-0.5">
+            {% for t in p.topics[:4] %}
+            <span class="text-[10px] px-1.5 py-0.5 rounded" style="background:rgba(212,165,165,.08); color:var(--text-muted)">{{ t }}</span>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="flex items-center gap-2 flex-shrink-0" x-data="{ running: false }">
+          <span class="text-xs" style="color:var(--text-faint)">Pas d'horaire</span>
+          <button @click="runNow('{{ p.id }}', '{{ p.name }}')"
+                  :disabled="running"
+                  class="btn btn-secondary text-xs py-1 px-2.5">
+            <svg x-show="!running" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3l14 9-14 9V3z"/></svg>
+            <svg x-show="running" class="w-3 h-3 spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-20" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-70" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.37 0 0 5.37 0 12h4z"/></svg>
+            <span x-text="running ? 'En cours…' : 'Lancer'"></span>
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- How to configure -->
+  <div class="rounded-xl p-5 border" style="background:rgba(212,165,165,.04); border-color:var(--border)">
+    <h3 class="text-sm font-semibold mb-3" style="color:var(--text)">Comment programmer une veille ?</h3>
+    <ol class="space-y-2 text-sm" style="color:var(--text-muted)">
+      <li class="flex gap-2.5">
+        <span class="w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5" style="background:rgba(212,165,165,.2); color:var(--accent)">1</span>
+        Créez ou éditez un <a href="/ui/watch-profiles" style="color:var(--accent); text-decoration:underline">profil de veille</a> avec vos topics et préférences.
+      </li>
+      <li class="flex gap-2.5">
+        <span class="w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5" style="background:rgba(212,165,165,.2); color:var(--accent)">2</span>
+        Configurez l'<strong style="color:var(--text)">heure de programmation</strong> (ex: <code class="px-1.5 py-0.5 rounded text-xs" style="background:rgba(212,165,165,.1); color:var(--clay)">08:00</code>) et les jours optionnels.
+      </li>
+      <li class="flex gap-2.5">
+        <span class="w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5" style="background:rgba(212,165,165,.2); color:var(--accent)">3</span>
+        Assurez-vous que le profil est <strong style="color:var(--text)">actif</strong>. Le scheduler vérifie toutes les 60 secondes.
+      </li>
+      <li class="flex gap-2.5">
+        <span class="w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5" style="background:rgba(212,165,165,.2); color:var(--accent)">4</span>
+        La date du jour (année + mois) est automatiquement injectée dans chaque analyse pour garantir des résultats récents.
+      </li>
+    </ol>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+async function runNow(profileId, profileName) {
+  const allCards = document.querySelectorAll('[x-data]');
+  let card = null;
+  for (const c of allCards) {
+    const btn = c.querySelector('button');
+    if (btn && btn.closest('[x-data]') === c) { card = c; break; }
+  }
+
+  // Find the Alpine component for this button
+  // Simple: use event delegation or just fetch directly
+  try {
+    const res = await fetch(`/watch-profiles/${profileId}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ send_email: false }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      alert(`✓ Profil "${profileName}" lancé avec succès.`);
+    } else {
+      alert(`✗ Échec : ${data.error || 'Erreur inconnue'}`);
+    }
+  } catch (e) {
+    alert(`✗ Erreur réseau : ${e.message}`);
+  }
+}
+{% endblock %}

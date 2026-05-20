@@ -1,46 +1,55 @@
 {% extends "base.html" %}
 {% block title %}Sessions — Tech Watch Agent{% endblock %}
+{% block page_title %}Sessions{% endblock %}
+
+{% block topbar_actions %}
+<button
+  hx-get="/ui/_sessions{% if current_status and current_status != 'all' %}?status={{ current_status }}{% endif %}"
+  hx-target="#session-tbody"
+  hx-swap="innerHTML"
+  class="flex items-center gap-1.5 text-xs text-rose-sand/40 hover:text-rose-sand/70 transition-colors px-3 py-1.5 rounded-lg hover:bg-white/[.04]">
+  <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+  </svg>
+  Rafraîchir
+</button>
+{% endblock %}
 
 {% block content %}
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem">
-  <h2 style="margin:0">Sessions de recherche</h2>
-  <button class="secondary outline"
-          hx-get="/ui/_sessions?status={{ current_status if current_status != 'all' else '' }}"
-          hx-target="#session-tbody"
-          hx-swap="innerHTML"
-          style="font-size:.85rem;padding:.4rem .9rem">
-    ↻ Rafraîchir
-  </button>
+<div class="p-6 space-y-4 w-full">
+
+  <!-- Filter pills -->
+  <div class="flex items-center gap-2 flex-wrap">
+    {% for label, val in [('Toutes', ''), ('En cours', 'running'), ('Complétées', 'completed'), ('Échouées', 'failed'), ('Créées', 'created')] %}
+    {% set is_active = (current_status == val) or (current_status == 'all' and val == '') %}
+    <a href="/ui/sessions{% if val %}?status={{ val }}{% endif %}"
+       class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+       style="{{ 'background:rgba(212,165,165,.15); color:var(--accent);' if is_active else 'background:var(--border); color:#71717a;' }}"
+       onmouseover="{{ '' if is_active else 'this.style.background=\'var(--border-s)\'; this.style.color=\'#d4d4d8\'' }}"
+       onmouseout="{{ '' if is_active else 'this.style.background=\'var(--border)\'; this.style.color=\'#71717a\'' }}">
+      {{ label }}
+    </a>
+    {% endfor %}
+    <span class="ml-auto text-xs text-rose-sand/30">{{ sessions|length }} session(s)</span>
+  </div>
+
+  <!-- Sessions table -->
+  <div class="rounded-xl border overflow-hidden" style="background:var(--card); border-color:var(--border)">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th class="pl-5" style="width:40%">Brief</th>
+          <th>Status</th>
+          <th>Phase</th>
+          <th>Créée</th>
+          <th>Terminée</th>
+        </tr>
+      </thead>
+      <tbody id="session-tbody">
+        {% include "partials/session_rows.html" %}
+      </tbody>
+    </table>
+  </div>
+
 </div>
-
-<!-- Filters -->
-<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem">
-  {% for label, val in [('Toutes', ''), ('En cours', 'running'), ('Complétées', 'completed'), ('Échouées', 'failed'), ('Créées', 'created')] %}
-  <a href="/ui/sessions{% if val %}?status={{ val }}{% endif %}"
-     role="button"
-     class="{{ '' if (current_status == val or (current_status == 'all' and val == '')) else 'secondary outline' }}"
-     style="font-size:.82rem;padding:.35rem .9rem">
-    {{ label }}
-  </a>
-  {% endfor %}
-</div>
-
-<article style="padding:0;overflow:hidden">
-  <table style="margin:0">
-    <thead>
-      <tr>
-        <th>Brief</th>
-        <th>Status</th>
-        <th>Phase</th>
-        <th>Créée</th>
-        <th>Terminée</th>
-      </tr>
-    </thead>
-    <tbody id="session-tbody">
-      {% include "partials/session_rows.html" %}
-    </tbody>
-  </table>
-</article>
-
-<p class="muted" style="font-size:.8rem;margin-top:.5rem">{{ sessions|length }} session(s) affichée(s)</p>
 {% endblock %}

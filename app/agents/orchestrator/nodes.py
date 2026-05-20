@@ -43,7 +43,9 @@ from app.agents.orchestrator.prompts import (
     COLLECTOR_USER,
     VALIDATOR_USER,
     ANALYZER_USER,
+    ANALYZER_SYSTEM,
     SYNTHESIZER_USER,
+    SYNTHESIZER_SYSTEM,
     EMAILER_USER,
 )
 from app.services.llm import ChatCompletionClient
@@ -62,9 +64,12 @@ RETRY_POLICY = {
 }
 
 FALLBACK_TOOLS = {
-    "search": ["duckduckgo_search", "arxiv", "openalex_search"],
-    "research": ["deep_research", "tavily", "arxiv"],
-    "crawl": ["crawl4ai", "scrapling", "http_fetch"],
+    "search": ["searxng", "web_search", "tavily_search", "exa_search", "arxiv"],
+    "web_search": ["searxng", "tavily_search", "exa_search", "langsearch"],
+    "searxng": ["web_search", "tavily_search", "exa_search"],
+    "research": ["deep_research", "searxng", "web_search", "arxiv"],
+    "crawl": ["jina_reader", "crawl4ai", "scrapling", "content_extractor"],
+    "academic": ["semantic_scholar", "arxiv", "openalex"],
 }
 
 
@@ -273,19 +278,22 @@ class OrchestratorNodes:
         """
         if not self._enable_persistence:
             return
-            
-        if self._session_manager is not None:
+
+        session_ref = state.get("session_id") or self._session_id
+        if session_ref is None:
             return
-            
+
+        if self._session_manager is not None and self._session_id == str(session_ref):
+            return
+
         try:
             from app.services.session_manager import SessionManager
-            
-            task_id = state.get("task_id")
-            if task_id:
-                session_uuid = uuid.UUID(task_id.replace("orch_", "")[:36])
-                self._session_manager = SessionManager(session_uuid)
-                await self._session_manager.initialize()
-                logger.info("Session manager initialized for: %s", task_id)
+
+            session_uuid = uuid.UUID(str(session_ref))
+            self._session_id = str(session_uuid)
+            self._session_manager = SessionManager(session_uuid)
+            await self._session_manager.initialize()
+            logger.info("Session manager initialized for session %s", session_uuid)
         except Exception as exc:
             logger.warning("Failed to initialize session manager: %s", exc)
             self._session_manager = None
@@ -303,18 +311,18 @@ class OrchestratorNodes:
             phase: New phase name
             reason: Reason for save
         """
-        if not self._enable_persistence or self._session_manager is None:
+        if not self._enable_persistence:
             return
-            
+
         try:
             await self._init_session_manager(state)
-            
+
             if self._session_manager is None:
                 return
-                
+
             from app.services.session_manager import SessionPhase
             session_phase = SessionPhase(phase) if phase in [p.value for p in SessionPhase] else SessionPhase.RESEARCH
-            
+
             await self._session_manager.save_phase(
                 phase=session_phase,
                 plan=state.get("plan", []),
@@ -338,18 +346,18 @@ class OrchestratorNodes:
         Returns:
             Checkpoint ID or empty string
         """
-        if not self._enable_persistence or self._session_manager is None:
+        if not self._enable_persistence:
             return ""
-            
+
         try:
             await self._init_session_manager(state)
-            
+
             if self._session_manager is None:
                 return ""
-                
+
             from app.services.session_manager import SessionPhase
             session_phase = SessionPhase(phase) if phase in [p.value for p in SessionPhase] else SessionPhase.RESEARCH
-            
+
             checkpoint_id = await self._session_manager.create_checkpoint(
                 phase=session_phase,
                 state_snapshot=dict(state),
@@ -374,17 +382,17 @@ class OrchestratorNodes:
             state: Current orchestrator state
             reason: Reason for compaction
         """
-        if not self._enable_persistence or self._session_manager is None:
+        if not self._enable_persistence:
             return
-            
+
         try:
             await self._init_session_manager(state)
-            
+
             if self._session_manager is None:
                 return
-                
+
             from app.services.session_manager import CompactionReason
-            
+
             compaction_reason = CompactionReason(reason)
             result = await self._session_manager.compact_memory(state, compaction_reason)
             
@@ -463,6 +471,22 @@ class OrchestratorNodes:
 
     async def supervisor(self, state: OrchestratorState) -> OrchestratorState:
         """Entry point. If no plan exists, delegate to planner. Otherwise continue."""
+        if self._enable_persistence:
+            await self._init_session_manager(state)
+            if not state.get("resumed_from_checkpoint"):
+                state = await self._try_resume_from_checkpoint(state)
+            if self._session_manager and self._session_manager.session:
+                persisted = self._session_manager.session
+                state.setdefault("research_brief", persisted.research_brief)
+                if not state.get("task"):
+                    state["task"] = persisted.research_brief
+                if not state.get("plan") and persisted.plan:
+                    state["plan"] = persisted.plan.get("steps", persisted.plan)
+                if not state.get("research_results") and persisted.research_results:
+                    state["research_results"] = persisted.research_results
+                if state.get("current_step_index", 0) == 0 and persisted.current_step_index:
+                    state["current_step_index"] = persisted.current_step_index
+
         task = state.get("task", "")
         plan = state.get("plan", [])
 
@@ -498,12 +522,20 @@ class OrchestratorNodes:
 
         client = self._client()
         
-        # Get date for prompt
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        
+        from app.core.watch_context import WatchContext
+        watch_ctx = state.get("watch_context") or WatchContext.default()
+        if isinstance(watch_ctx, dict):
+            watch_ctx = WatchContext(**watch_ctx)
+
         prompt = PLANNER_USER.format(
             task=task,
-            topics=", ".join(topics) if isinstance(topics, list) else topics,
+            watch_context=watch_ctx.to_prompt_block(),
+            depth=watch_ctx.depth,
+            suggested_steps=watch_ctx.suggested_steps,
+            allowed_tools=", ".join(watch_ctx.allowed_tools),
+            current_year=watch_ctx.current_year,
+            current_month=watch_ctx.month_name,
+            topic=", ".join(topics) if isinstance(topics, list) else str(topics),
         )
 
         try:
@@ -942,8 +974,19 @@ Rules:
 
         corpus = "\n\n".join(corpus_parts)
 
+        from app.core.watch_context import WatchContext
+        watch_ctx = state.get("watch_context") or WatchContext.default()
+        if isinstance(watch_ctx, dict):
+            watch_ctx = WatchContext(**watch_ctx)
+
         client = self._client()
-        prompt = COLLECTOR_USER.format(results=corpus)
+        prompt = COLLECTOR_USER.format(
+            task=state.get("research_brief", task),
+            step_count=len(state.get("completed_steps", [])),
+            results=corpus,
+            current_year=watch_ctx.current_year,
+            current_month=watch_ctx.month_name,
+        )
 
         try:
             summary = await client.async_generate_completion(
@@ -961,7 +1004,7 @@ Rules:
             await self._save_phase(state, "collection", "research_completed")
             
             # Create checkpoint and compact memory before analysis
-            await self._create_checkpoint(state, "research")
+            await self._create_checkpoint(state, "collection")
             await self._compact_memory(state, "research_completed")
 
         except Exception as exc:
@@ -1244,13 +1287,26 @@ Rules:
 
         corpus = "\n\n".join(corpus_parts) or "No corpus available"
 
+        from app.core.watch_context import WatchContext
+        watch_ctx = state.get("watch_context") or WatchContext.default()
+        if isinstance(watch_ctx, dict):
+            watch_ctx = WatchContext(**watch_ctx)
+
         client = self._client()
-        prompt = ANALYZER_USER.format(task=task, corpus=corpus)
+        prompt = ANALYZER_USER.format(
+            task=task,
+            corpus=corpus,
+            current_year=watch_ctx.current_year,
+            current_month=watch_ctx.month_name,
+        )
 
         try:
             analysis = await client.async_generate_completion(
                 prompt=prompt,
-                system_message="You are the Analyst Agent. Extract key insights from research.",
+                system_message=ANALYZER_SYSTEM.format(
+                    current_year=watch_ctx.current_year,
+                    current_month=watch_ctx.month_name,
+                ),
                 temperature=0.4,
                 max_tokens=4000,
             )
@@ -1297,13 +1353,30 @@ Rules:
         corpus = "\n\n".join(corpus_parts) or "No data available"
         analysis_text = analysis or "No analysis available"
 
+        from app.core.watch_context import WatchContext
+        from app.agents.orchestrator.prompts import SYNTHESIZER_SYSTEM
+        watch_ctx = state.get("watch_context") or WatchContext.default()
+        if isinstance(watch_ctx, dict):
+            watch_ctx = WatchContext(**watch_ctx)
+
         client = self._client()
-        prompt = SYNTHESIZER_USER.format(task=task, corpus=corpus, analysis=analysis_text)
+        prompt = SYNTHESIZER_USER.format(
+            task=task,
+            corpus=corpus,
+            analysis=analysis_text,
+            current_year=watch_ctx.current_year,
+            current_month=watch_ctx.month_name,
+        )
+        synthesizer_system = SYNTHESIZER_SYSTEM.format(
+            synthesizer_context=watch_ctx.to_synthesizer_block(),
+            current_year=watch_ctx.current_year,
+            current_month=watch_ctx.month_name,
+        )
 
         try:
             report = await client.async_generate_completion(
                 prompt=prompt,
-                system_message="You are the Synthesizer Agent. Create comprehensive tech reports.",
+                system_message=synthesizer_system,
                 temperature=0.4,
                 max_tokens=8000,
             )
@@ -1333,9 +1406,7 @@ Rules:
     ) -> None:
         """Persist research results and report to ResearchSession."""
         try:
-            from app.db.base import get_db_context
-            from app.db.models import ResearchSession
-            import uuid
+            from app.services.session_manager import SessionPhase
 
             research_results = state.get("research_results", [])
             notes = []
@@ -1352,20 +1423,23 @@ Rules:
                             summary = item.get("summary", item.get("description", ""))
                             raw_notes.append(f"[{step_name}/{tool}] {title}: {summary[:200]}")
 
-            session = ResearchSession(
-                id=uuid.uuid4(),
-                user_id=None,
-                research_brief=task[:500],
+            await self._init_session_manager(state)
+            if self._session_manager is None:
+                raise ValueError("Session manager unavailable for final persistence")
+
+            await self._session_manager.update_session(
+                status="completed",
+                phase=SessionPhase.COMPLETED,
+                plan=state.get("plan", []),
+                current_step_index=state.get("current_step_index", 0),
+                research_results=research_results,
+                analysis_results=state.get("analysis_results", ""),
                 final_report=state.get("final_report", ""),
                 notes=notes,
                 raw_notes=raw_notes,
-                status="completed",
+                completed_at=datetime.now(),
             )
-
-            async with get_db_context() as db_session:
-                db_session.add(session)
-                await db_session.commit()
-                logger.info("Stored research session with %d notes", len(raw_notes))
+            logger.info("Updated research session %s with %d notes", state.get("session_id"), len(raw_notes))
 
         except Exception as exc:
             logger.warning("Failed to persist research session: %s", exc)

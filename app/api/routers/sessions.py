@@ -63,6 +63,33 @@ async def list_sessions(
         }
 
 
+@router.get("/interruptible")
+async def list_interruptible_sessions() -> dict[str, Any]:
+    """List all sessions that can be resumed (not completed or failed)."""
+    async with async_session_factory() as session:
+        repo = ResearchSessionRepository(session)
+        sessions = await repo.get_interruptible_sessions()
+
+        return {
+            "sessions": [
+                {
+                    "id": str(s.id),
+                    "research_brief": s.research_brief[:200] + "..." if len(s.research_brief) > 200 else s.research_brief,
+                    "status": s.status,
+                    "phase": s.phase,
+                    "plan_version": s.plan_version,
+                    "current_step_index": s.current_step_index,
+                    "has_checkpoint": True,
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                }
+                for s in sessions
+            ],
+            "total": len(sessions),
+            "message": f"Found {len(sessions)} resumable sessions",
+        }
+
+
 @router.get("/{session_id}")
 async def get_session(session_id: str) -> dict[str, Any]:
     """Get detailed session information including plan and results."""
@@ -304,28 +331,3 @@ def _get_resume_instructions(phase: str) -> str:
     )
 
 
-@router.get("/interruptible")
-async def list_interruptible_sessions() -> dict[str, Any]:
-    """List all sessions that can be resumed (not completed or failed)."""
-    async with async_session_factory() as session:
-        repo = ResearchSessionRepository(session)
-        sessions = await repo.get_interruptible_sessions()
-
-        return {
-            "sessions": [
-                {
-                    "id": str(s.id),
-                    "research_brief": s.research_brief[:200] + "..." if len(s.research_brief) > 200 else s.research_brief,
-                    "status": s.status,
-                    "phase": s.phase,
-                    "plan_version": s.plan_version,
-                    "current_step_index": s.current_step_index,
-                    "has_checkpoint": True,
-                    "created_at": s.created_at.isoformat() if s.created_at else None,
-                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-                }
-                for s in sessions
-            ],
-            "total": len(sessions),
-            "message": f"Found {len(sessions)} resumable sessions",
-        }
