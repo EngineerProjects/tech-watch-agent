@@ -985,7 +985,7 @@ Rules:
 
         # 3. Apply ranking
         from app.services.article_ranker import ArticleRanker
-        ranker = ArticleRanker(get_settings())
+        ranker = ArticleRanker()
         # We rank against the main research brief/task
         ranked_articles = ranker.filter_relevant_articles(
             articles_to_rank, 
@@ -1414,19 +1414,22 @@ Rules:
 
         try:
             from langchain_core.callbacks import dispatch_custom_event
-            
+
             report = ""
             logger.info("Synthesizer starting streamed report generation...")
-            
+
             async for chunk in client.async_stream_completion(
                 prompt=prompt,
                 system_message=synthesizer_system,
                 temperature=0.4,
-                max_tokens=8000,
+                max_tokens=4000,
             ):
                 report += chunk
-                # Dispatch custom event for real-time UI updates
-                await dispatch_custom_event("report_chunk", {"chunk": chunk}, config=config)
+                # dispatch_custom_event is synchronous in this langchain_core version
+                try:
+                    dispatch_custom_event("report_chunk", {"chunk": chunk}, config=config)
+                except Exception:
+                    pass
 
             state["final_report"] = report
             state["synthesis_result"] = report[:500] + "..." if len(report) > 500 else report

@@ -184,7 +184,7 @@ class ChatCompletionClient:
         if extra_headers:
             headers.update(extra_headers)
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
             response = await client.post(
                 f"{self.base_url}/chat/completions",
                 json=payload,
@@ -350,7 +350,7 @@ class ChatCompletionClient:
             headers.update(extra_headers)
 
         import json
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/chat/completions",

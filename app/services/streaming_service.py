@@ -118,72 +118,91 @@ class StreamingOrchestratorService:
             "timestamp": datetime.now().isoformat()
         })
 
+        # Internal LangGraph chain names that should not produce user-facing events
+        _SKIP_NAMES = {"LangGraph", "_route_after_planner", "__start__", "__end__"}
+
         try:
             # 4. Stream graph execution
-            # We use astream_events to catch node transitions and tool outputs
+            # LangGraph v1 emits on_chain_start/end for nodes (not on_node_start/end)
             async for event in self.agent._graph.astream_events(
-                initial_state, 
+                initial_state,
                 version="v1",
                 config={"configurable": {"thread_id": session_id}}
             ):
                 kind = event["event"]
                 name = event["name"]
-                
-                # a) Node transitions (Phases)
+
+                # a) Graph start → initializing phase
                 if kind == "on_chain_start" and name == "LangGraph":
                     yield self._format_sse("phase_transition", {"phase": "initializing"})
-                
-                elif kind == "on_node_start":
+
+                # b) Node started (LangGraph uses on_chain_start for nodes)
+                elif kind == "on_chain_start" and name not in _SKIP_NAMES:
                     yield self._format_sse("phase_transition", {
                         "phase": name,
                         "status": "started",
                         "timestamp": datetime.now().isoformat()
                     })
-                
-                elif kind == "on_node_end":
-                    # Extract interesting data from state update
+
+                # c) Node completed (LangGraph uses on_chain_end for nodes)
+                elif kind == "on_chain_end" and name not in _SKIP_NAMES:
                     output = event.get("data", {}).get("output", {})
-                    
-                    if name == "planner" and "plan" in output:
+                    if not isinstance(output, dict):
+                        output = {}
+
+                    # Always emit plan when it changes (captures step status updates)
+                    if "plan" in output and output["plan"]:
                         yield self._format_sse("plan_updated", {
                             "plan": output["plan"],
                             "timestamp": datetime.now().isoformat()
                         })
-                    
-                    elif name == "dispatcher" or name == "dispatcher_parallel":
-                        if "research_results" in output and output["research_results"]:
-                            latest = output["research_results"][-1]
+
+                    if name in ("dispatcher", "dispatcher_parallel"):
+                        results = output.get("research_results") or []
+                        if results:
+                            latest = results[-1]
+                            raw_data = latest.get("data", [])
+                            articles_preview: list[dict] = []
+                            if isinstance(raw_data, list):
+                                for item in raw_data[:15]:
+                                    if isinstance(item, dict) and item.get("url"):
+                                        articles_preview.append({
+                                            "title": item.get("title") or item.get("name") or "",
+                                            "url": item.get("url", ""),
+                                            "source": item.get("source", ""),
+                                            "published_date": item.get("published_date") or item.get("date") or "",
+                                            "summary": (item.get("summary") or "")[:300],
+                                            "relevance_score": item.get("relevance_score"),
+                                        })
                             yield self._format_sse("research_result", {
                                 "step_id": latest.get("step_id"),
-                                "tool": latest.get("tool"),
-                                "count": latest.get("count"),
+                                "step_name": latest.get("step_name", ""),
+                                "tool": latest.get("tool", ""),
+                                "count": latest.get("count", 0),
+                                "articles": articles_preview,
                                 "timestamp": datetime.now().isoformat()
                             })
-                    
-                    elif name == "synthesizer" and "final_report" in output:
-                        yield self._format_sse("report_completed", {
-                            "report_length": len(output["final_report"]),
-                            "timestamp": datetime.now().isoformat()
-                        })
 
-                elif kind == "on_custom_event":
-                    if name == "report_chunk":
-                        yield self._format_sse("report_chunk", {
-                            "chunk": event["data"].get("chunk", ""),
-                            "timestamp": datetime.now().isoformat()
-                        })
+                    elif name == "synthesizer":
+                        report = output.get("final_report", "")
+                        if report:
+                            # Stream report in chunks of ~400 chars for live display
+                            chunk_size = 400
+                            for i in range(0, len(report), chunk_size):
+                                yield self._format_sse("report_chunk", {
+                                    "chunk": report[i:i + chunk_size],
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                                await asyncio.sleep(0.01)
+                            yield self._format_sse("report_completed", {
+                                "report_length": len(report),
+                                "timestamp": datetime.now().isoformat()
+                            })
 
-                # c) Tool execution
-                elif kind == "on_tool_start":
-                    yield self._format_sse("step_started", {
-                        "tool": name,
-                        "timestamp": datetime.now().isoformat()
-                    })
-                
-                elif kind == "on_tool_end":
-                    yield self._format_sse("step_completed", {
-                        "tool": name,
-                        "success": True, # Assume success if no error in event
+                # d) Real-time report chunks dispatched from synthesizer node
+                elif kind == "on_custom_event" and name == "report_chunk":
+                    yield self._format_sse("report_chunk", {
+                        "chunk": event["data"].get("chunk", ""),
                         "timestamp": datetime.now().isoformat()
                     })
 
