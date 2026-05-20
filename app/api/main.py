@@ -34,6 +34,7 @@ from app.api.routers import (
     tools_router,
     llm_router,
     watch_profiles_router,
+    config_router,
 )
 from app.dashboard import dashboard_router
 
@@ -108,16 +109,67 @@ async def _profile_scheduler_loop() -> None:
             for p in profiles:
                 if not p.schedule_time or p.schedule_time != current_hhmm:
                     continue
-                if p.schedule_days and current_day not in [d.lower() for d in p.schedule_days]:
-                    continue
+
+                stype = (p.schedule_type or "weekly").lower()
+
+                if stype == "weekly":
+                    if p.schedule_days and current_day not in [d.lower() for d in p.schedule_days]:
+                        continue
+
+                elif stype == "once":
+                    if not p.schedule_date:
+                        continue
+                    if p.schedule_date != now.strftime("%Y-%m-%d"):
+                        continue
+                    # After running once, deactivate so it doesn't re-fire
+                    if p.last_run_at and p.last_run_at.date() == now.date():
+                        continue
+
+                elif stype in ("monthly", "custom"):
+                    if not p.schedule_date:
+                        continue
+                    from datetime import date as _date
+                    try:
+                        start = _date.fromisoformat(p.schedule_date)
+                    except ValueError:
+                        continue
+                    interval = max(1, p.schedule_interval_months or 1)
+                    today = now.date()
+                    if today.day != start.day:
+                        continue
+                    # Check we're on an N-month boundary from the start date
+                    months_diff = (today.year - start.year) * 12 + (today.month - start.month)
+                    if months_diff < 0 or months_diff % interval != 0:
+                        continue
+
+                else:
+                    # Unknown type — fall back to weekly logic
+                    if p.schedule_days and current_day not in [d.lower() for d in p.schedule_days]:
+                        continue
 
                 pid = str(p.id)
                 if pid in _running_profile_ids:
                     logger.info("Profile '%s' already running, skipping", p.name)
                     continue
 
-                logger.info("Scheduler: triggering profile '%s'", p.name)
+                logger.info("Scheduler: triggering profile '%s' (type=%s)", p.name, stype)
                 asyncio.create_task(_execute_scheduled_profile(pid, p.name))
+
+                # Deactivate one-time profiles after firing
+                if stype == "once":
+                    try:
+                        from app.db.base import async_session_factory as _asf
+                        from app.db.repositories import WatchProfileRepository as _WPR
+                        import uuid as _uuid2
+                        async with _asf() as _db:
+                            _repo = _WPR(_db)
+                            _p = await _repo.get_by_id(_uuid2.UUID(pid))
+                            if _p:
+                                _p.is_active = False
+                                await _repo.update(_p)
+                                await _db.commit()
+                    except Exception as _exc:
+                        logger.warning("Could not deactivate once-profile '%s': %s", p.name, _exc)
 
         except Exception as exc:
             logger.error("Scheduler loop error: %s", exc)
@@ -139,9 +191,11 @@ async def lifespan(app: FastAPI):
         from app.db.base import async_session_factory
         from app.db.repositories import AppConfigRepository
         from app.config.settings import set_db_overrides
+        from app.core.crypto import decrypt_overrides
         async with async_session_factory() as db:
-            overrides = await AppConfigRepository(db).get_all()
-        if overrides:
+            raw_overrides = await AppConfigRepository(db).get_all()
+        if raw_overrides:
+            overrides = decrypt_overrides(raw_overrides)
             set_db_overrides(overrides)
             logger.info("Applied %d DB config overrides to settings", len(overrides))
     except Exception as exc:
@@ -345,9 +399,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     )
 
     # Add CORS middleware
+    # allow_origins=["*"] is incompatible with allow_credentials=True per the CORS spec.
+    # Explicit origins are required for credentialed requests.
+    cors_origins = resolved_settings.cors_origins if hasattr(resolved_settings, "cors_origins") else []
+    if not cors_origins:
+        cors_origins = [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+        ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -366,6 +430,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(tools_router)
     app.include_router(llm_router)
     app.include_router(watch_profiles_router)
+    app.include_router(config_router)
     app.include_router(dashboard_router)
 
     @app.get("/", include_in_schema=False)

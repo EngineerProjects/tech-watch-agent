@@ -482,8 +482,11 @@ class WatchProfile(Base):
     language: Mapped[str] = mapped_column(String(10), default="fr")
     audience: Mapped[str] = mapped_column(String(200), default="solo developer")
     focus: Mapped[Optional[str]] = mapped_column(Text, nullable=True)    # free-form instructions
-    schedule_time: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)   # "08:00"
-    schedule_days: Mapped[list] = mapped_column(JSONType(), default=list)             # ["monday"]
+    schedule_time: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)             # "08:00"
+    schedule_days: Mapped[list] = mapped_column(JSONType(), default=list)                      # ["monday"]
+    schedule_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)            # weekly|once|monthly|custom
+    schedule_date: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)            # "2025-06-15"
+    schedule_interval_months: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)    # 1,2,3...
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

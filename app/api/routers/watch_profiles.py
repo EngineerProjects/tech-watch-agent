@@ -32,6 +32,9 @@ class WatchProfileCreate(BaseModel):
     focus: Optional[str] = None
     schedule_time: Optional[str] = None
     schedule_days: list[str] = Field(default_factory=list)
+    schedule_type: Optional[str] = Field(None)   # weekly|once|monthly|custom
+    schedule_date: Optional[str] = None           # "2025-06-15"
+    schedule_interval_months: Optional[int] = Field(None, ge=1, le=60)
     is_active: bool = True
 
 
@@ -47,6 +50,9 @@ class WatchProfileUpdate(BaseModel):
     focus: Optional[str] = None
     schedule_time: Optional[str] = None
     schedule_days: Optional[list[str]] = None
+    schedule_type: Optional[str] = None
+    schedule_date: Optional[str] = None
+    schedule_interval_months: Optional[int] = Field(None, ge=1, le=60)
     is_active: Optional[bool] = None
 
 
@@ -63,6 +69,9 @@ class WatchProfileResponse(BaseModel):
     focus: Optional[str]
     schedule_time: Optional[str]
     schedule_days: list[str]
+    schedule_type: Optional[str]
+    schedule_date: Optional[str]
+    schedule_interval_months: Optional[int]
     is_active: bool
     last_run_at: Optional[str]
     created_at: str
@@ -83,6 +92,9 @@ class WatchProfileResponse(BaseModel):
             focus=p.focus,
             schedule_time=p.schedule_time,
             schedule_days=list(p.schedule_days or []),
+            schedule_type=p.schedule_type,
+            schedule_date=p.schedule_date,
+            schedule_interval_months=p.schedule_interval_months,
             is_active=p.is_active,
             last_run_at=p.last_run_at.isoformat() if p.last_run_at else None,
             created_at=p.created_at.isoformat() if p.created_at else "",

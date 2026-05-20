@@ -503,10 +503,10 @@ class ToolExecutionRepository:
         )
         return result.scalars().all()
 
-    async def get_stats(days: int = 7) -> dict:
+    async def get_stats(self, days: int = 7) -> dict:
         """Get tool execution statistics."""
         cutoff_date = datetime.now() - timedelta(days=days)
-        result = await Session.execute(
+        result = await self.session.execute(
             select(
                 ToolExecution.tool_name,
                 func.count(ToolExecution.id).label("count"),

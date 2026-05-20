@@ -1,4 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
+from fastapi.responses import StreamingResponse
+from typing import Optional
 from app.config.settings import get_settings
 from app.api.models import OrchestratorRequest, OrchestratorResponse
 from app.core.logging import get_logger
@@ -9,42 +11,38 @@ router = APIRouter(prefix="/orchestrator", tags=["Orchestrator"])
 
 @router.post("/run", response_model=OrchestratorResponse)
 async def run_orchestrator(payload: OrchestratorRequest) -> OrchestratorResponse:
-    """Run the orchestrator agent for research and report generation.
-
-    Mode:
-    - autonomous=True (default): Fully automated, no human approval needed.
-                                 Use for scheduled tasks (e.g., "2x per week").
-    - autonomous=False: Interactive mode with human approval checkpoints.
-                       Use for on-demand research with review before sending.
-    """
-    from app.scheduler.service import OrchestratorScheduler
-    resolved_settings = get_settings()
-
+    """Run the full orchestrator pipeline (plan → research → synthesis → email)."""
     try:
-        scheduler = OrchestratorScheduler(
-            mode=payload.mode,
-            settings=resolved_settings,
-        )
-        result = await scheduler.run_task(
-            task=payload.task,
-            topics=payload.topics,
-            send_email=payload.send_email,
-            autonomous=payload.autonomous,
-        )
+        from app.agents.orchestrator.agent import OrchestratorAgent
+
+        agent = OrchestratorAgent()
+        result = await agent.execute({
+            "task": payload.task,
+            "topics": payload.topics,
+            "send_email": payload.send_email,
+            "autonomous": payload.autonomous,
+        })
+
+        if result.success:
+            output = result.output or {}
+            return OrchestratorResponse(
+                success=True,
+                session_id=str(result.session_id) if result.session_id else output.get("session_id"),
+                report=output.get("report"),
+                email_sent=output.get("email_sent", False),
+                research_results_count=len(output.get("research_results", [])),
+                plan_steps=len(output.get("plan", [])),
+                execution_time=result.metadata.get("execution_time_seconds"),
+                quality_score=result.metadata.get("quality_score"),
+                errors=[],
+            )
 
         return OrchestratorResponse(
-            success=result.get("success", False),
-            session_id=result.get("session_id"),
-            report=result.get("report"),
-            subject=result.get("subject"),
-            email_sent=result.get("email_sent", False),
-            research_results_count=len(result.get("research_results", [])),
-            plan_steps=len(result.get("plan", [])),
-            execution_time=result.get("execution_time"),
-            quality_score=result.get("quality_score"),
-            approval_status=result.get("approval_status"),
-            errors=result.get("errors", []),
+            success=False,
+            email_sent=False,
+            errors=result.errors,
         )
+
     except Exception as exc:
         logger.error("Orchestrator endpoint failed: %s", exc)
         return OrchestratorResponse(
@@ -52,6 +50,32 @@ async def run_orchestrator(payload: OrchestratorRequest) -> OrchestratorResponse
             email_sent=False,
             errors=[str(exc)],
         )
+
+
+@router.get("/stream")
+async def stream_orchestrator(
+    task: str = Query(..., description="Research task to execute"),
+    topics: Optional[list[str]] = Query(None, description="Optional topic list"),
+    autonomous: bool = Query(True, description="Run without human intervention"),
+):
+    """Run the orchestrator and stream events in real-time via SSE (GET for EventSource compatibility)."""
+    from app.services.streaming_service import StreamingOrchestratorService
+
+    service = StreamingOrchestratorService()
+
+    return StreamingResponse(
+        service.stream_run(
+            task=task,
+            topics=topics,
+            autonomous=autonomous,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/task", response_model=OrchestratorResponse)
@@ -63,16 +87,11 @@ async def run_orchestrator_task(payload: OrchestratorRequest) -> OrchestratorRes
 @router.post("/schedule", response_model=dict)
 async def setup_scheduled_task(
     task: str = "Weekly tech watch",
-    topics: list[str] | None = None,
-    schedule_times: list[str] | None = None,
+    topics: Optional[list[str]] = None,
+    schedule_times: Optional[list[str]] = None,
 ) -> dict:
-    """Set up a scheduled autonomous task.
-
-    This endpoint configures the scheduler to run the orchestrator
-    automatically at specified times (e.g., ["08:00", "18:00"]).
-    """
+    """Set up a scheduled autonomous task."""
     from app.scheduler.service import OrchestratorScheduler
-    from app.config.settings import get_settings
 
     scheduler = OrchestratorScheduler(
         mode="v2",
@@ -96,8 +115,6 @@ async def setup_scheduled_task(
 @router.get("/status", response_model=dict)
 async def get_orchestrator_status() -> dict:
     """Get the current runtime status of the orchestrator."""
-    from app.scheduler.service import OrchestratorScheduler
-
     return {
         "status": "ok",
         "mode": "available",

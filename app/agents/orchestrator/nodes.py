@@ -940,40 +940,79 @@ Rules:
     async def collector(self, state: OrchestratorState) -> OrchestratorState:
         """Aggregate all research results into a unified corpus.
 
-        Also persists articles to the database for future retrieval.
+        Also persists articles to the database for future retrieval and
+        applies ranking to select the most relevant ones for synthesis.
         """
         research_results = state.get("research_results", [])
         task = state.get("task", "")
+        research_brief = state.get("research_brief", task)
 
         if not research_results:
             state["errors"] = state.get("errors", []) + ["No research results to collect"]
             return state
 
-        corpus_parts = []
-        articles_to_store = []
-
+        # 1. Extract all articles from all steps
+        all_articles_data = []
         for r in research_results:
-            tool = r.get("tool", "unknown")
             data = r.get("data", [])
-            count = r.get("count", 0)
+            tool = r.get("tool", "unknown")
             step_name = r.get("step_name", "")
-
+            
             if isinstance(data, list):
-                items = []
-                for item in data[:self._max_articles]:
+                for item in data:
                     if isinstance(item, dict):
-                        items.append(f"- {item.get('title', item.get('name', str(item)))}: {item.get('summary', item.get('description', ''))[:200]}")
-                        articles_to_store.append(item)
-                    elif isinstance(item, str):
-                        items.append(f"- {item}")
-                    else:
-                        items.append(f"- {str(item)[:200]}")
-                corpus_parts.append(f"### {step_name} ({tool}, {count} items)\n" + "\n".join(items))
-            else:
-                corpus_parts.append(f"### {step_name} ({tool}): {str(data)[:500]}")
+                        # Ensure basic fields exist for ranking
+                        item.setdefault("topic", step_name)
+                        item.setdefault("source", tool)
+                        all_articles_data.append(item)
+            elif isinstance(data, dict):
+                data.setdefault("topic", step_name)
+                data.setdefault("source", tool)
+                all_articles_data.append(data)
+
+        # 2. Convert to Article objects for ranking
+        from app.core.models import Article as ArticleModel
+        articles_to_rank = []
+        for a in all_articles_data:
+            articles_to_rank.append(ArticleModel(
+                title=a.get("title", a.get("name", "")),
+                summary=a.get("summary", a.get("description", "")),
+                url=a.get("url", ""),
+                source=a.get("source", "unknown"),
+                topic=a.get("topic", ""),
+                published_date=a.get("published_date", a.get("date")),
+            ))
+
+        # 3. Apply ranking
+        from app.services.article_ranker import ArticleRanker
+        ranker = ArticleRanker(get_settings())
+        # We rank against the main research brief/task
+        ranked_articles = ranker.filter_relevant_articles(
+            articles_to_rank, 
+            research_brief,
+            limit=self._max_articles * 3 # Keep more for corpus than for a single step
+        )
+        
+        logger.info("Collector: ranked %d articles down to %d most relevant", 
+                   len(articles_to_rank), len(ranked_articles))
+
+        # 4. Build corpus from ranked articles
+        corpus_parts = []
+        for a in ranked_articles:
+            date_str = f" ({a.published_date})" if a.published_date else ""
+            corpus_parts.append(
+                f"### {a.title}{date_str}\n"
+                f"Source: {a.source} | Topic: {a.topic} | Relevance: {a.relevance_score}\n"
+                f"URL: {a.url}\n\n"
+                f"{a.summary}"
+            )
 
         corpus = "\n\n".join(corpus_parts)
 
+        # 5. Persistent storage
+        await self._persist_articles(all_articles_data)
+
+        # 6. Generate summary/aggregation via LLM
         from app.core.watch_context import WatchContext
         watch_ctx = state.get("watch_context") or WatchContext.default()
         if isinstance(watch_ctx, dict):
@@ -981,9 +1020,9 @@ Rules:
 
         client = self._client()
         prompt = COLLECTOR_USER.format(
-            task=state.get("research_brief", task),
-            step_count=len(state.get("completed_steps", [])),
-            results=corpus,
+            task=research_brief,
+            step_count=len(state.get("plan", [])),
+            results=corpus[:15000], # Safety limit for LLM context
             current_year=watch_ctx.current_year,
             current_month=watch_ctx.month_name,
         )
@@ -991,15 +1030,15 @@ Rules:
         try:
             summary = await client.async_generate_completion(
                 prompt=prompt,
-                system_message="You are the Collector Agent. Aggregate research results.",
+                system_message="You are the Collector Agent. Aggregate research results into a structured summary.",
                 temperature=0.3,
                 max_tokens=4000,
             )
-            state["articles"] = research_results
-            logger.info("Collector aggregated %d result sets", len(research_results))
+            # Store summary in analysis_results as a precursor to final synthesis
+            state["analysis_results"] = summary
+            state["articles"] = all_articles_data
+            logger.info("Collector aggregated research into structured summary")
 
-            await self._persist_articles(articles_to_store)
-            
             # Save checkpoint after research phase
             await self._save_phase(state, "collection", "research_completed")
             
@@ -1008,8 +1047,8 @@ Rules:
             await self._compact_memory(state, "research_completed")
 
         except Exception as exc:
-            logger.error("Collector failed: %s", exc)
-            state["articles"] = research_results
+            logger.error("Collector LLM aggregation failed: %s", exc)
+            state["articles"] = all_articles_data
             state["errors"] = state.get("errors", []) + [f"Collector error: {exc}"]
 
         return state
@@ -1318,7 +1357,7 @@ Rules:
 
         return state
 
-    async def synthesizer(self, state: OrchestratorState) -> OrchestratorState:
+    async def synthesizer(self, state: OrchestratorState, config: Optional[dict] = None) -> OrchestratorState:
         """Create the final comprehensive report.
 
         Also stores the report in ResearchSession for future reference.
@@ -1374,12 +1413,21 @@ Rules:
         )
 
         try:
-            report = await client.async_generate_completion(
+            from langchain_core.callbacks import dispatch_custom_event
+            
+            report = ""
+            logger.info("Synthesizer starting streamed report generation...")
+            
+            async for chunk in client.async_stream_completion(
                 prompt=prompt,
                 system_message=synthesizer_system,
                 temperature=0.4,
                 max_tokens=8000,
-            )
+            ):
+                report += chunk
+                # Dispatch custom event for real-time UI updates
+                await dispatch_custom_event("report_chunk", {"chunk": chunk}, config=config)
+
             state["final_report"] = report
             state["synthesis_result"] = report[:500] + "..." if len(report) > 500 else report
             state["completed_at"] = datetime.now().isoformat()

@@ -121,6 +121,25 @@ services:
     networks:
       - tech-watch-network
 
+  # React frontend served by nginx, proxies /api/* to the backend
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        # In this compose setup nginx proxies /api → backend, so VITE_API_URL
+        # must point to the nginx /api prefix so the SPA uses relative-style calls.
+        # For local dev outside Docker, override to http://localhost:8000.
+        - VITE_API_URL=/api
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - tech-watch-network
+    restart: unless-stopped
+
 networks:
   tech-watch-network:
     driver: bridge

@@ -7,9 +7,10 @@ LLM APIs across multiple providers (OpenRouter, Ollama, Z.ai, OpenAI).
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, AsyncGenerator, Optional
 
 import httpx
+from pydantic import BaseModel
 
 from app.config.settings import Settings, get_settings
 from app.core.logging import get_logger
@@ -307,6 +308,73 @@ class ChatCompletionClient:
                 client.close()
 
         return self._extract_content(data)
+
+    async def async_stream_completion(
+        self,
+        prompt: str,
+        system_message: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a completion from the LLM provider.
+        
+        Args:
+            prompt: User prompt
+            system_message: Optional system message
+            model: Optional model override
+            temperature: Optional temperature override
+            max_tokens: Optional max tokens override
+            extra_headers: Optional additional headers
+            
+        Yields:
+            Chunks of the generated content as they arrive
+        """
+        payload = {
+            "model": model or self.default_model,
+            "messages": self._build_messages(prompt, system_message),
+            "temperature": temperature if temperature is not None else self.default_temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,
+            "stream": True,
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self._provider_config.auth_type.value == "bearer":
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        elif self._provider_config.auth_type.value == "api_key":
+            headers["X-API-Key"] = self._api_key
+        if extra_headers:
+            headers.update(extra_headers)
+
+        import json
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers=headers,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    
+                    try:
+                        chunk = json.loads(data_str)
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+                    except Exception as exc:
+                        logger.debug("Failed to parse stream chunk: %s", exc)
+                        continue
 
     @staticmethod
     def _build_messages(prompt: str, system_message: str | None) -> list[dict[str, str]]:

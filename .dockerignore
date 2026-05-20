@@ -36,8 +36,9 @@ htmlcov/
 !README.md
 docs/
 
-# Docker
+# Docker — exclude build files but allow runtime configs needed by COPY
 docker/
+!docker/nginx.conf
 
 # Logs
 logs/

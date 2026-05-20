@@ -151,18 +151,32 @@ class OrchestratorAgent(BaseAgent):
             self._nodes._session_id = str(session_uuid)
             self._nodes._session_manager = None
 
+        # --- Memory context integration ---
+        if memory_context is None:
+            try:
+                from app.tools.memory.search_memory import SearchMemoryTool
+                memory_tool = SearchMemoryTool()
+                logger.info("Fetching memory context for task: %s", task[:50])
+                memory_result = await memory_tool.execute({"query": task, "top_k": 5})
+                if memory_result.get("success"):
+                    memory_context = memory_result.get("data", {})
+                    logger.info("Found %d relevant articles in memory", memory_context.get("count", 0))
+            except Exception as exc:
+                logger.warning("Auto memory search failed: %s", exc)
+
         memory_info = ""
         if memory_context:
-            recent = memory_context.get("recent_articles", [])
+            recent = memory_context.get("results", []) or memory_context.get("recent_articles", [])
             if recent:
                 memory_info = f"\n\nContext from memory ({len(recent)} recent articles):\n"
                 memory_info += "\n".join([
-                    f"- {a.get('title', 'Unknown')}: {a.get('summary', '')[:100]}..."
+                    f"- {a.get('title', 'Unknown')}: {a.get('summary', '')[:200]}..."
                     for a in recent[:3]
                 ])
 
-        if memory_info and topics:
+        if memory_info:
             task = task + memory_info
+        # --- End memory context integration ---
 
         try:
             await self.setup()
