@@ -53,6 +53,7 @@ class Settings:
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "INFO"
+    frontend_url: str = "http://localhost:3000"
 
     # Database configuration
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch"
@@ -130,6 +131,7 @@ class Settings:
             app_host=os.getenv("APP_HOST", "0.0.0.0"),
             app_port=int(os.getenv("APP_PORT", "8000")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
+            frontend_url=os.getenv("FRONTEND_URL", "http://localhost:3000"),
             database_url=os.getenv(
                 "DATABASE_URL",
                 "postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch",

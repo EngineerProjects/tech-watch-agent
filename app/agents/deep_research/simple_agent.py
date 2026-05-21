@@ -76,10 +76,14 @@ class SimpleDeepResearchAgent(BaseAgent):
 
             # Generate summary using LLM
             llm_client = self._nodes.llm_client
+            findings_text = "\n".join(
+                f"## {e.get('title', 'Untitled')}\n{e.get('content', '')[:500]}"
+                for e in extracted[:3]
+            )
             summary_prompt = f"""Research topic: {query}
 
 Provide a comprehensive research summary based on these findings:
-{chr(10).join([f"## {e.get('title', 'Untitled')}\n{e.get('content', '')[:500]}" for e in extracted[:3]])}
+{findings_text}
 
 Write a well-structured research report with:
 - Executive Summary

@@ -13,6 +13,7 @@ from app.api.routers.tools import router as tools_router
 from app.api.routers.llm import router as llm_router
 from app.api.routers.watch_profiles import router as watch_profiles_router
 from app.api.routers.config import router as config_router
+from app.api.routers.sources import router as sources_router
 
 __all__ = [
     "health_router",
@@ -26,4 +27,5 @@ __all__ = [
     "llm_router",
     "watch_profiles_router",
     "config_router",
+    "sources_router",
 ]

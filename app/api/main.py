@@ -35,6 +35,7 @@ from app.api.routers import (
     llm_router,
     watch_profiles_router,
     config_router,
+    sources_router,
 )
 from app.dashboard import dashboard_router
 
@@ -209,6 +210,19 @@ async def lifespan(app: FastAPI):
     from app.tools.registry_init import initialize_tools
     initialize_tools()
 
+    # Register agent-based tools (deep_research, newsletter)
+    from app.agents import initialize_agents
+    initialize_agents()
+
+    # Clean up sessions stuck in "running" from previous crashes/deploys
+    try:
+        from app.services.streaming_service import cleanup_stale_running_sessions
+        cleaned = await cleanup_stale_running_sessions(max_age_hours=1)
+        if cleaned:
+            logger.info("Startup: marked %d orphaned sessions as failed", cleaned)
+    except Exception as _exc:
+        logger.warning("Stale session cleanup skipped: %s", _exc)
+
     # Start in-process profile scheduler
     scheduler_task = asyncio.create_task(_profile_scheduler_loop())
 
@@ -232,52 +246,14 @@ def _register_default_tools(settings: Optional[Settings] = None) -> None:
     registry = get_global_registry()
     resolved_settings = settings or get_settings()
 
-    # Only register if not already registered
+    # Multi-provider search (SearXNG + Tavily in parallel, deduped by URL)
     if "web_search" not in registry:
-        from app.tools.web.search import NewsSearchService
-
-        class RegisteredSearchTool(BaseTool):
-            @property
-            def name(self) -> str:
-                return "web_search"
-
-            @property
-            def description(self) -> str:
-                return "Search for news articles on the web"
-
-            @property
-            def category(self) -> ToolCategory:
-                return ToolCategory.SEARCH
-
-            @property
-            def parameters(self) -> dict:
-                return {
-                    "type": "object",
-                    "properties": {
-                        "topic": {"type": "string", "description": "Topic to search for"}
-                    },
-                    "required": ["topic"]
-                }
-
-            async def execute(self, params: dict) -> dict:
-                search = NewsSearchService()
-                try:
-                    urls = await search.search_news_urls(params.get("topic", ""))
-                    return {
-                        "success": True,
-                        "data": urls,
-                        "error": None,
-                        "metadata": {"count": len(urls)}
-                    }
-                except Exception as exc:
-                    return {
-                        "success": False,
-                        "data": None,
-                        "error": str(exc),
-                        "metadata": {}
-                    }
-
-        registry.register(RegisteredSearchTool())
+        try:
+            from app.tools.web.multi_search import MultiProviderSearchTool
+            registry.register(MultiProviderSearchTool())
+            logger.info("Registered MultiProviderSearch tool as 'web_search'")
+        except Exception as exc:
+            logger.warning("Failed to register MultiProviderSearch tool: %s", exc)
 
     # Register SearXNG (self-hosted metasearch — primary free search provider)
     if "searxng" not in registry:
@@ -431,11 +407,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(llm_router)
     app.include_router(watch_profiles_router)
     app.include_router(config_router)
+    app.include_router(sources_router)
     app.include_router(dashboard_router)
 
     @app.get("/", include_in_schema=False)
     async def root_redirect():
-        return RedirectResponse(url="/ui")
+        return RedirectResponse(url=resolved_settings.frontend_url)
 
     return app
 

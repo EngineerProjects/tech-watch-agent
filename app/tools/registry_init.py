@@ -22,17 +22,46 @@ def initialize_tools() -> None:
     tools_registered = 0
     
     # Web Search Tools
+    # SearXNG — pure single-provider tool (used directly by the planner when it says tool_name="searxng")
+    try:
+        from app.tools.web.searxng import SearXNGSearchTool
+        searxng_tool = SearXNGSearchTool()
+        register_tool(searxng_tool)
+        tools_registered += 1
+        logger.info("Registered SearXNG search tool")
+    except (ImportError, ValueError) as e:
+        logger.warning(f"SearXNG not available: {e}")
+
+    # Tavily — registered under its own name for direct calls and multi-provider
     try:
         from app.tools.web.tavily import TavilySearchTool
-        if hasattr(TavilySearchTool, '_api_key'):
-            tool = TavilySearchTool()
-            if tool._api_key:
-                register_tool(tool)
-                tools_registered += 1
-                logger.info("Registered Tavily search tool")
+        tool = TavilySearchTool()
+        if tool._api_key:
+            register_tool(tool)
+            tools_registered += 1
+            logger.info("Registered Tavily search tool")
+        else:
+            logger.debug("Tavily not configured (no TAVILY_API_KEY)")
     except (ImportError, ValueError) as e:
         logger.debug(f"Tavily not available: {e}")
+
+    # web_search — multi-provider tool (SearXNG + Tavily + Exa in parallel, deduped)
+    try:
+        from app.tools.web.multi_search import MultiProviderSearchTool
+        register_tool(MultiProviderSearchTool())
+        tools_registered += 1
+        logger.info("Registered MultiProviderSearch tool as 'web_search'")
+    except (ImportError, ValueError) as e:
+        logger.warning(f"MultiProviderSearch not available: {e}")
     
+    try:
+        from app.tools.web.semantic_scholar import SemanticScholarTool
+        register_tool(SemanticScholarTool())
+        tools_registered += 1
+        logger.info("Registered Semantic Scholar tool")
+    except (ImportError, ValueError) as e:
+        logger.debug(f"Semantic Scholar not available: {e}")
+
     try:
         from app.tools.web.openalex import OpenAlexTool
         register_tool(OpenAlexTool())

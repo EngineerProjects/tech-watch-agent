@@ -31,37 +31,73 @@ class NewsSearchService:
             self._try_exa,
             self._try_langsearch,
         ):
+            provider_name = provider_fn.__name__.removeprefix("_try_")
             try:
                 urls = await provider_fn(topic, max_results)
                 if urls:
                     logger.info(
-                        "search_news_urls: got %d results via %s for '%s'",
+                        "[search] provider=%s query='%s' results=%d",
+                        provider_name,
+                        topic[:80],
                         len(urls),
-                        provider_fn.__name__.removeprefix("_try_"),
-                        topic,
                     )
                     return urls
+                logger.debug("[search] provider=%s returned 0 results for '%s'", provider_name, topic[:80])
             except Exception as exc:
-                logger.debug("%s failed for '%s': %s", provider_fn.__name__, topic, exc)
+                logger.warning("[search] provider=%s failed for '%s': %s", provider_name, topic[:80], exc)
 
-        logger.warning("All search providers failed for '%s', using static fallback", topic)
+        logger.warning("[search] all providers failed for '%s', returning static fallback", topic)
         return self.settings.news_sources[:max_results]
 
     async def search(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
-        """Like search_news_urls but returns full result dicts with title+url+description."""
-        for provider_fn in (
-            self._search_searxng,
-            self._search_tavily,
-            self._search_exa,
-            self._search_langsearch,
-        ):
+        """Run SearXNG + Tavily in parallel, merge and deduplicate results.
+
+        Falls back to the remaining providers sequentially if both primary
+        providers yield nothing.
+        """
+        import asyncio
+
+        async def _safe(fn: Any, *args: Any) -> list[dict]:
+            try:
+                return await fn(*args) or []
+            except Exception as exc:
+                logger.debug("%s search failed for '%s': %s", fn.__name__, query, exc)
+                return []
+
+        # Fire the two primary providers in parallel
+        searxng_results, tavily_results = await asyncio.gather(
+            _safe(self._search_searxng, query, max_results),
+            _safe(self._search_tavily, query, max_results),
+        )
+
+        # Merge, dedup by URL, preserve order (SearXNG first)
+        seen: set[str] = set()
+        combined: list[dict] = []
+        for item in searxng_results + tavily_results:
+            url = item.get("url", "")
+            if url and url not in seen:
+                seen.add(url)
+                combined.append(item)
+
+        if combined:
+            logger.info(
+                "search: %d results (searxng=%d, tavily=%d) for '%s'",
+                len(combined), len(searxng_results), len(tavily_results), query,
+            )
+            return combined[:max_results * 2]  # allow more results when multi-provider
+
+        # Fallback chain for remaining providers
+        for provider_fn in (self._search_exa, self._search_langsearch):
+            provider_name = provider_fn.__name__.removeprefix("_search_")
             try:
                 results = await provider_fn(query, max_results)
                 if results:
+                    logger.info("[search] fallback provider=%s query='%s' results=%d", provider_name, query[:80], len(results))
                     return results
             except Exception as exc:
-                logger.debug("%s search failed for '%s': %s", provider_fn.__name__, query, exc)
+                logger.warning("[search] fallback provider=%s failed for '%s': %s", provider_name, query[:80], exc)
 
+        logger.warning("[search] all providers returned 0 results for '%s'", query[:80])
         return []
 
     # ── SearXNG ────────────────────────────────────────────────────────────────

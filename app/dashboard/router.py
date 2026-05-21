@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config.settings import get_settings
 from app.core.logging import get_logger
+from app.services.session_manager import normalize_plan_payload
 
 logger = get_logger(__name__)
 
@@ -193,13 +194,24 @@ async def session_detail(request: Request, session_id: str) -> HTMLResponse:
             if not s:
                 return HTMLResponse("<p>Session introuvable.</p>", status_code=404)
 
+            raw_results = s.research_results or []
+            sources_count = 0
+            for item in raw_results:
+                if not isinstance(item, dict):
+                    continue
+                if isinstance(item.get("data"), list):
+                    sources_count += sum(1 for entry in item["data"] if isinstance(entry, dict) and entry.get("url"))
+                elif item.get("url"):
+                    sources_count += 1
+
             session_data = {
                 "id": str(s.id),
                 "brief": s.research_brief,
                 "status": s.status,
                 "phase": s.phase or "—",
-                "plan": s.plan or [],
-                "research_results": s.research_results or [],
+                "plan": normalize_plan_payload(s.plan),
+                "research_results": raw_results,
+                "sources_count": sources_count,
                 "report_html": _md(s.final_report or ""),
                 "has_report": bool(s.final_report),
                 "created_at": s.created_at.strftime("%d/%m/%Y %H:%M") if s.created_at else "—",

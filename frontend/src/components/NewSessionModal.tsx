@@ -5,6 +5,7 @@ import {
   Clock, Repeat, RotateCcw, Send, Plus,
 } from 'lucide-react';
 import { ApiService } from '../services/api';
+import type { SessionLaunchPayload } from '../types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -14,7 +15,7 @@ type FreqType = 'once' | 'weekly' | 'monthly' | 'custom';
 interface NewSessionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onRunImmediate: (task: string, topics: string[]) => void;
+  onRunImmediate: (payload: SessionLaunchPayload) => void;
   onScheduled?: () => void;
 }
 
@@ -185,7 +186,8 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
 }) => {
   // Task fields
   const [name, setName] = useState('');
-  const [brief, setBrief] = useState('');
+  const [subject, setSubject] = useState('');
+  const [researchInstructions, setResearchInstructions] = useState('');
   const [topicsInput, setTopicsInput] = useState('');
   const [topics, setTopics] = useState<string[]>([]);
   const [depth, setDepth] = useState<'brief' | 'standard' | 'deep'>('standard');
@@ -217,7 +219,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   };
 
   const reset = () => {
-    setName(''); setBrief(''); setTopicsInput(''); setTopics([]);
+    setName(''); setSubject(''); setResearchInstructions(''); setTopicsInput(''); setTopics([]);
     setDepth('standard'); setFormat('report'); setSendEmail(false);
     setMode('immediate'); setFreqType('weekly');
     setScheduleTime('08:00'); setSelectedDays(['monday']);
@@ -234,16 +236,21 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     const allTopics = [...topics];
     if (topicsInput.trim()) allTopics.push(topicsInput.trim().toLowerCase());
 
+    if (!subject.trim()) { setError('Le subject est requis.'); return; }
+
     if (mode === 'immediate') {
-      const task = brief.trim() || name.trim();
-      if (!task) { setError('Le sujet de recherche est requis.'); return; }
-      onRunImmediate(task, allTopics);
+      onRunImmediate({
+        title: subject.trim(),
+        subject: subject.trim(),
+        researchInstructions: researchInstructions.trim() || undefined,
+        topics: allTopics,
+      });
       handleClose();
       return;
     }
 
     // Scheduled
-    if (!name.trim()) { setError('Le nom de la session est requis.'); return; }
+    if (!name.trim()) { setError('Le titre de la session est requis.'); return; }
     if (freqType === 'weekly' && selectedDays.length === 0) {
       setError('Sélectionnez au moins un jour de répétition.'); return;
     }
@@ -255,10 +262,11 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     try {
       await ApiService.createWatchProfile({
         name: name.trim(),
+        subject: subject.trim(),
         topics: allTopics,
         depth,
         format,
-        focus: brief.trim() || undefined,
+        focus: researchInstructions.trim() || undefined,
         schedule_type: freqType,
         schedule_time: scheduleTime,
         schedule_days: freqType === 'weekly' ? selectedDays : [],
@@ -367,27 +375,35 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
 
                   {mode === 'scheduled' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <label style={labelStyle}>Nom de la session</label>
+                      <label style={labelStyle}>Titre de la session</label>
                       <input
                         type="text"
                         value={name}
                         onChange={e => setName(e.target.value)}
-                        placeholder="Ex: Veille IA hebdomadaire"
+                        placeholder="Ex: Open-source LLMs - hebdo"
                         style={inputStyle}
                       />
                     </div>
                   )}
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label style={labelStyle}>Sujet de recherche</label>
+                    <label style={labelStyle}>Subject</label>
                     <textarea
                       autoFocus={mode === 'immediate'}
-                      value={brief}
-                      onChange={e => setBrief(e.target.value)}
-                      placeholder={mode === 'immediate'
-                        ? 'Ex: Dernières avancées sur les modèles de raisonnement (O1, DeepSeek) en mai 2026...'
-                        : 'Instructions optionnelles pour guider la recherche...'}
-                      style={{ ...inputStyle, minHeight: '90px', resize: 'none' }}
+                      value={subject}
+                      onChange={e => setSubject(e.target.value)}
+                      placeholder='Ex: What happened this week in open-source LLMs and reasoning models?'
+                      style={{ ...inputStyle, minHeight: '88px', resize: 'none' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={labelStyle}>Research Instructions <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optionnel)</span></label>
+                    <textarea
+                      value={researchInstructions}
+                      onChange={e => setResearchInstructions(e.target.value)}
+                      placeholder='Ex: Analyze the latest developments from the past 7 days, compare DeepSeek, Qwen, Llama, Mistral, and prioritize technical depth.'
+                      style={{ ...inputStyle, minHeight: '150px', resize: 'vertical' }}
                     />
                   </div>
 

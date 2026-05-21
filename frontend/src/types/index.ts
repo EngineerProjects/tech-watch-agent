@@ -57,6 +57,9 @@ export interface Article {
 
 export interface ResearchSession {
   id: string;
+  title?: string;
+  subject?: string | null;
+  research_instructions?: string | null;
   research_brief: string;
   status: SessionStatus;
   phase: SessionPhase;
@@ -85,9 +88,43 @@ export interface NewsletterRun {
   completed_at?: string;
 }
 
+export interface ActiveSessionInfo {
+  sessionId: string;
+  task: string;
+  status: 'running' | 'completed' | 'failed';
+  phase: string;
+  articleCount: number;
+}
+
+export interface SessionLaunchPayload {
+  subject: string;
+  topics: string[];
+  researchInstructions?: string;
+  title?: string;
+}
+
+export interface CollectedSource {
+  id: string;
+  session_id: string;
+  session_brief: string;
+  step_id?: string | null;
+  step_name?: string | null;
+  article_id?: string | null;
+  title: string;
+  url: string;
+  source: string;
+  topic?: string | null;
+  summary?: string | null;
+  published_date?: string | null;
+  relevance_score?: number | null;
+  tool_name?: string | null;
+  created_at?: string | null;
+}
+
 export interface WatchProfile {
   id: string;
   name: string;
+  subject?: string | null;
   topics: string[];
   depth: 'brief' | 'standard' | 'deep';
   format: 'digest' | 'report' | 'newsletter';

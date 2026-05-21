@@ -51,6 +51,7 @@ class OrchestratorConfig(AgentConfig):
     approval_threshold: float = 0.7
 
     enable_checkpointing: bool = False
+    enable_session_persistence: bool = True
     checkpoint_backend: Literal["memory", "postgres"] = "memory"
     retry_policy: RetryPolicy = field(default_factory=lambda: {
         "max_attempts": 3,

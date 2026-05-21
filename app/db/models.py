@@ -18,6 +18,7 @@ from typing import Optional
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -426,6 +427,83 @@ class SessionCheckpoint(Base):
         return f"<SessionCheckpoint(session={self.session_id}, phase={self.phase}, latest={self.is_latest})>"
 
 
+class SessionStep(Base):
+    """Normalized persisted execution step for a research session."""
+
+    __tablename__ = "session_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("research_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    step_index: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    step_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    tool_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_session_steps_unique", "session_id", "step_id", unique=True),
+        Index("ix_session_steps_session_index", "session_id", "step_index"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SessionStep(session={self.session_id}, step_id={self.step_id}, status={self.status})>"
+
+
+class SessionSource(Base):
+    """Normalized source collected for a research session."""
+
+    __tablename__ = "session_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("research_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    step_id: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
+    step_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    article_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey("articles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    source: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    topic: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    published_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    relevance_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    tool_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    meta_data: Mapped[dict] = mapped_column(JSONType(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    __table_args__ = (
+        Index("ix_session_sources_session_step_url", "session_id", "step_id", "url", unique=True),
+        Index("ix_session_sources_source_created", "source", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SessionSource(session={self.session_id}, source={self.source}, url={self.url[:40]})>"
+
+
 class ToolExecution(Base):
     """Tool execution log for debugging and analytics.
 
@@ -474,6 +552,7 @@ class WatchProfile(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    subject: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     topics: Mapped[list] = mapped_column(JSONType(), default=list)
     depth: Mapped[str] = mapped_column(String(20), default="standard")   # brief|standard|deep
     format: Mapped[str] = mapped_column(String(20), default="report")    # digest|report|newsletter

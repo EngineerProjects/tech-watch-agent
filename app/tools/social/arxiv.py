@@ -35,7 +35,7 @@ class ArXivTool(BaseTool):
     def __init__(self) -> None:
         """Initialize ArXiv tool."""
         super().__init__()
-        self._base_url = "http://export.arxiv.org/api/query"
+        self._base_url = "https://export.arxiv.org/api/query"
 
     @property
     def name(self) -> str:
@@ -101,7 +101,7 @@ new publications in specific fields, or discover foundational papers."""
         Returns:
             ToolResult with ArXiv data or error
         """
-        action = params.get("action")
+        action = params.get("action") or "search"
         query = params.get("query", "")
         category = params.get("category", "")
         author = params.get("author", "")
@@ -234,7 +234,7 @@ new publications in specific fields, or discover foundational papers."""
 
         import httpx
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(
                 self._base_url,
                 params={"id_list": paper_id.replace("arxiv:", "")},
@@ -282,7 +282,7 @@ new publications in specific fields, or discover foundational papers."""
         """
         import httpx
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             response = await client.get(
                 self._base_url,
                 params={

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, model_validator
 
 class HealthResponse(BaseModel):
     status: str
@@ -34,6 +34,23 @@ class ArticleResponse(BaseModel):
     topic: str
     published_date: Optional[datetime]
     relevance_score: int
+
+class SourceResponse(BaseModel):
+    id: str
+    session_id: str
+    session_brief: str
+    step_id: Optional[str]
+    step_name: Optional[str]
+    article_id: Optional[str]
+    title: str
+    url: str
+    source: str
+    topic: Optional[str]
+    summary: Optional[str]
+    published_date: Optional[str]
+    relevance_score: Optional[float]
+    tool_name: Optional[str]
+    created_at: Optional[str]
 
 class NewsletterGenerateRequest(BaseModel):
     topics: Optional[list[str]] = None
@@ -98,6 +115,9 @@ class ProviderListResponse(BaseModel):
 
 class OrchestratorRequest(BaseModel):
     task: str = "Weekly tech watch"
+    subject: Optional[str] = None
+    title: Optional[str] = None
+    research_instructions: Optional[str] = None
     topics: Optional[list[str]] = None
     send_email: bool = True
     mode: str = "v2"
@@ -105,11 +125,38 @@ class OrchestratorRequest(BaseModel):
 
     @field_validator("task")
     @classmethod
-    def task_not_empty(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("task must not be empty")
-        return v
+    def task_clean(cls, v: str) -> str:
+        return v.strip()
+
+    @field_validator("subject")
+    @classmethod
+    def subject_clean(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
+    @field_validator("title")
+    @classmethod
+    def title_clean(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
+    @field_validator("research_instructions")
+    @classmethod
+    def research_instructions_clean(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def ensure_task_or_subject(self) -> "OrchestratorRequest":
+        if not self.subject and not self.task:
+            raise ValueError("task or subject must be provided")
+        return self
 
     @field_validator("mode")
     @classmethod

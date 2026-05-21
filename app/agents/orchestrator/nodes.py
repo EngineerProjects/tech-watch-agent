@@ -52,6 +52,7 @@ from app.services.llm import ChatCompletionClient
 from app.services.llm.health import LLMHealthManager, get_health_manager
 from app.tools.registry import get_global_registry
 from app.core.logging import get_logger
+from app.services.session_manager import normalize_plan_payload
 
 
 logger = get_logger(__name__)
@@ -64,10 +65,12 @@ RETRY_POLICY = {
 }
 
 FALLBACK_TOOLS = {
-    "search": ["searxng", "web_search", "tavily_search", "exa_search", "arxiv"],
-    "web_search": ["searxng", "tavily_search", "exa_search", "langsearch"],
-    "searxng": ["web_search", "tavily_search", "exa_search"],
-    "research": ["deep_research", "searxng", "web_search", "arxiv"],
+    # web_search and searxng both resolve to SearXNGSearchTool, so skip the
+    # redundant alias and go straight to Tavily as first real fallback.
+    "search": ["tavily_search", "searxng", "exa_search", "arxiv"],
+    "web_search": ["tavily_search", "exa_search", "langsearch"],
+    "searxng": ["tavily_search", "exa_search", "web_search"],
+    "research": ["deep_research", "web_search", "arxiv"],
     "crawl": ["jina_reader", "crawl4ai", "scrapling", "content_extractor"],
     "academic": ["semantic_scholar", "arxiv", "openalex"],
 }
@@ -185,6 +188,69 @@ def group_parallel_steps(plan: list[PlanStep]) -> tuple[list[list[int]], list[in
     return parallel_groups, sequential_indices
 
 
+def _normalize_step_data(data: Any) -> list[dict]:
+    """Convert any tool output shape into a flat list of article dicts.
+
+    Handles:
+    - list of dicts (SearXNG, SemanticScholar, GitHub …)
+    - Tavily format: {"results": [...], "answer": str, "count": int}
+    - MultiProvider format: {"articles": [...], "providers": [...]}
+    - deep_research format: {"report": str, "findings": list, "query": str}
+    """
+    if isinstance(data, list):
+        return data
+
+    if not isinstance(data, dict):
+        return []
+
+    # Tavily: {"results": [...]}
+    if "results" in data and isinstance(data["results"], list):
+        out = []
+        for r in data["results"]:
+            if isinstance(r, dict) and r.get("url"):
+                out.append({
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "summary": r.get("content") or r.get("summary") or r.get("description") or "",
+                    "source": r.get("source") or r.get("url", "").split("/")[2] if r.get("url") else "",
+                    "published_date": r.get("published_date") or r.get("date") or "",
+                    "relevance_score": r.get("score") or r.get("relevance_score"),
+                })
+        return out
+
+    # MultiProvider or generic: {"articles": [...]}
+    if "articles" in data and isinstance(data["articles"], list):
+        return data["articles"]
+
+    # deep_research AgentAsTool output: {"report": str, "findings": list}
+    findings = data.get("findings") or []
+    if findings:
+        out = []
+        for f in findings:
+            if isinstance(f, dict):
+                out.append({
+                    "title": f.get("title") or (f.get("url", "")[:80] if f.get("url") else ""),
+                    "url": f.get("url", ""),
+                    "summary": (f.get("content") or f.get("summary") or "")[:400],
+                    "source": "deep_research",
+                    "published_date": "",
+                })
+        return out
+
+    # Fallback: wrap the report text as a pseudo-article
+    report = data.get("report", "")
+    if report:
+        return [{
+            "title": "Rapport de recherche approfondie",
+            "url": "",
+            "summary": report[:400],
+            "source": "deep_research",
+            "published_date": "",
+        }]
+
+    return []
+
+
 def _parse_json_safe(text: str) -> Any:
     """Parse JSON from LLM output, handling markdown code blocks."""
     text = text.strip()
@@ -255,9 +321,13 @@ class OrchestratorNodes:
             from app.config.settings import get_settings
             settings = get_settings()
             
+            # zai_api_key may be empty; fall back to llm_api_key (which may hold the ZAI key)
+            zai_key = settings.zai_api_key or (
+                settings.llm_api_key if settings.llm_provider == "zai" else ""
+            )
             api_keys = {
-                "zai": settings.zai_api_key or "",
-                "openrouter": settings.llm_api_key or "",
+                "zai": zai_key,
+                "openrouter": getattr(settings, "openrouter_api_key", "") or "",
             }
             
             active_provider = await self._health_manager.ensure_healthy_provider(api_keys)
@@ -481,7 +551,7 @@ class OrchestratorNodes:
                 if not state.get("task"):
                     state["task"] = persisted.research_brief
                 if not state.get("plan") and persisted.plan:
-                    state["plan"] = persisted.plan.get("steps", persisted.plan)
+                    state["plan"] = normalize_plan_payload(persisted.plan)
                 if not state.get("research_results") and persisted.research_results:
                     state["research_results"] = persisted.research_results
                 if state.get("current_step_index", 0) == 0 and persisted.current_step_index:
@@ -502,7 +572,7 @@ class OrchestratorNodes:
 
     async def planner(self, state: OrchestratorState) -> OrchestratorState:
         """Generate execution plan from task using LLM.
-        
+
         PLAN MODE STRICT:
         - Must generate a valid plan with at least 1 step
         - Each step must have required fields (step_id, name, step_type)
@@ -512,7 +582,7 @@ class OrchestratorNodes:
         """
         task = state.get("task", "")
         topics = state.get("metadata", {}).get("topics", task)
-        
+
         max_plan_retries = state.get("max_plan_retries", 3)
         plan_attempts = state.get("plan_attempts", 0)
 
@@ -521,11 +591,17 @@ class OrchestratorNodes:
         logger.info("Using LLM provider for planning: %s", active_provider)
 
         client = self._client()
-        
+
         from app.core.watch_context import WatchContext
         watch_ctx = state.get("watch_context") or WatchContext.default()
         if isinstance(watch_ctx, dict):
             watch_ctx = WatchContext(**watch_ctx)
+
+        import random
+        from datetime import datetime as _dt
+        # Add a per-session seed so the LLM generates different plans across runs
+        session_seed = state.get("session_id", "")[-6:] if state.get("session_id") else ""
+        run_ts = _dt.now().strftime("%H:%M:%S")
 
         prompt = PLANNER_USER.format(
             task=task,
@@ -537,11 +613,13 @@ class OrchestratorNodes:
             current_month=watch_ctx.month_name,
             topic=", ".join(topics) if isinstance(topics, list) else str(topics),
         )
+        # Append a uniqueness hint so repeated tasks yield different plans
+        prompt += f"\n\n[session={session_seed} ts={run_ts} vary_approach=true]"
 
         try:
-            logger.info("Generating plan for task: %s (attempt %d/%d)", 
+            logger.info("Generating plan for task: %s (attempt %d/%d)",
                        task[:100], plan_attempts + 1, max_plan_retries)
-            
+
             response = await client.async_generate_completion(
                 prompt=prompt,
                 system_message="""You are a Planning Agent. Create structured execution plans.
@@ -562,9 +640,11 @@ Rules:
 - step_id must be unique (step_1, step_2, etc.)
 - name must be 1-50 characters
 - step_type must be one of the valid types
-- tool_name must be a registered tool name
+- tool_name must be a registered tool name or null (for synthesis)
+- ALWAYS end the plan with a synthesis step: {"step_type": "synthesis", "tool_name": null, "params": {}}
+- Vary the research approach each time (different tools, angles, queries)
 - Return ONLY valid JSON array, no markdown, no explanation""",
-                temperature=0.2,
+                temperature=0.7,
                 max_tokens=3000,
             )
 
@@ -592,6 +672,21 @@ Rules:
                     parse_step_type(step.get("step_type", "research"))
                 except ValueError:
                     step["step_type"] = "research"
+
+            # Ensure the plan ends with a synthesis step
+            has_synthesis = any(
+                str(s.get("step_type", "")).lower() == "synthesis"
+                for s in plan_data
+            )
+            if not has_synthesis:
+                plan_data.append({
+                    "step_id": f"step_{len(plan_data) + 1}",
+                    "name": "Synthèse finale",
+                    "description": "Rédaction du rapport de synthèse final",
+                    "step_type": "synthesis",
+                    "tool_name": None,
+                    "params": {},
+                })
 
             plan: list[PlanStep] = []
             for i, step in enumerate(plan_data[:10]):
@@ -731,18 +826,20 @@ Rules:
                 plan[current_idx]["result"] = json.dumps(data) if isinstance(data, (list, dict)) else str(data)
                 plan[current_idx]["completed_at"] = datetime.now().isoformat()
 
+                normalized_data = _normalize_step_data(data)
                 research_results.append({
                     "step_id": step_id,
                     "step_name": step["name"],
                     "tool": tool_name or "deep_research",
-                    "data": data,
-                    "count": len(data) if isinstance(data, list) else 1,
+                    "data": normalized_data,
+                    "count": len(normalized_data) if isinstance(normalized_data, list) else 1,
                     "timestamp": datetime.now().isoformat(),
                 })
-                logger.info("Step '%s' completed with %d results", step_id, len(data) if isinstance(data, list) else 1)
+                logger.info("Step '%s' completed with %d results", step_id, len(normalized_data) if isinstance(normalized_data, list) else 1)
 
                 if isinstance(data, list):
                     await self._persist_articles_from_step(data, step["name"], tool_name or "deep_research")
+                await self._sync_sources_realtime(state, research_results)
             else:
                 plan[current_idx]["status"] = StepStatus.FAILED
                 plan[current_idx]["error"] = error or "Unknown error"
@@ -780,6 +877,7 @@ Rules:
             tools_to_try.extend(FALLBACK_TOOLS[tool_name])
 
         last_error = None
+        started_at = datetime.now().isoformat()
         for attempt in range(policy["max_attempts"]):
             for current_tool in tools_to_try:
                 try:
@@ -813,12 +911,23 @@ Rules:
                             continue
 
                     if result.get("success"):
+                        data_val = result.get("data")
+                        # Normalise to list immediately so we can check emptiness
+                        normalized = _normalize_step_data(data_val)
+                        if not normalized:
+                            last_error = f"Tool '{current_tool}' returned 0 results"
+                            logger.debug("Tool '%s' returned empty results, trying fallback", current_tool)
+                            continue
+                        # Use the normalised list as the canonical data
+                        data_val = normalized
                         return idx, {
                             "success": True,
-                            "data": result.get("data", {}),
+                            "data": data_val if data_val is not None else {},
                             "step_id": step_id,
                             "tool": current_tool,
                             "attempts": attempt + 1,
+                            "started_at": started_at,
+                            "completed_at": datetime.now().isoformat(),
                         }
                     last_error = result.get("error", "Unknown error")
                 except Exception as exc:
@@ -830,6 +939,8 @@ Rules:
             "step_id": step_id,
             "tool": tool_name,
             "attempts": policy["max_attempts"],
+            "started_at": started_at,
+            "completed_at": datetime.now().isoformat(),
         }
 
     async def dispatcher_parallel(self, state: OrchestratorState) -> OrchestratorState:
@@ -870,19 +981,20 @@ Rules:
         logger.info("Execution plan: %d parallel groups, %d sequential steps",
                    len(parallel_groups), len(pending_sequential))
 
-        async def run_step(step: PlanStep, idx: int) -> tuple[int, dict]:
+        async def run_step(step: PlanStep, idx: int, stagger_delay: float = 0.0) -> tuple[int, dict]:
             tool_name = step.get("tool_name") or "search"
             params = step.get("params", {}) or {}
-            step_id = step["step_id"]
-            step_type = step.get("step_type")
-            
-            if step_type == StepType.DEEP_RESEARCH:
-                return await self._execute_with_retry(step, idx, tool_name, params, state)
-            
+            # Stagger parallel steps that hit SearXNG to avoid concurrent engine throttling
+            if stagger_delay > 0:
+                await asyncio.sleep(stagger_delay)
             return await self._execute_with_retry(step, idx, tool_name, params, state)
 
         try:
-            tasks = [run_step(plan[i], i) for i in pending_parallel]
+            # Add a small incremental delay so parallel SearXNG requests don't all land at once
+            tasks = [
+                run_step(plan[i], i, stagger_delay=0.5 * n)
+                for n, i in enumerate(pending_parallel)
+            ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             research_results = state.get("research_results", [])
@@ -897,18 +1009,19 @@ Rules:
                 if idx >= len(updated_plan):
                     continue
 
-                updated_plan[idx]["started_at"] = datetime.now().isoformat()
-                updated_plan[idx]["completed_at"] = datetime.now().isoformat()
+                updated_plan[idx]["started_at"] = result.get("started_at") or updated_plan[idx].get("started_at") or datetime.now().isoformat()
+                updated_plan[idx]["completed_at"] = result.get("completed_at") or datetime.now().isoformat()
 
                 if result.get("success"):
                     updated_plan[idx]["status"] = StepStatus.DONE
                     updated_plan[idx]["result"] = json.dumps(result.get("data")) if isinstance(result.get("data"), (list, dict)) else str(result.get("data"))
+                    normalized_data = _normalize_step_data(result.get("data", []))
                     research_results.append({
                         "step_id": result.get("step_id"),
                         "step_name": plan[idx]["name"],
                         "tool": result.get("tool", ""),
-                        "data": result.get("data", []),
-                        "count": len(result.get("data", [])) if isinstance(result.get("data"), list) else 1,
+                        "data": normalized_data,
+                        "count": len(normalized_data) if isinstance(normalized_data, list) else 1,
                         "timestamp": datetime.now().isoformat(),
                     })
                     completed_count += 1
@@ -918,7 +1031,10 @@ Rules:
 
             state["plan"] = updated_plan
             state["research_results"] = research_results
-            
+
+            # Sync sources to DB so they appear in the frontend during the session
+            await self._sync_sources_realtime(state, research_results)
+
             # Update current_step_index to first pending sequential step
             if pending_sequential:
                 state["current_step_index"] = pending_sequential[0]
@@ -1113,6 +1229,26 @@ Rules:
                 )
         except Exception as exc:
             logger.warning("Failed to persist articles from step '%s': %s", step_name, exc)
+
+    async def _sync_sources_realtime(
+        self,
+        state: OrchestratorState,
+        research_results: list[dict],
+    ) -> None:
+        """Push current research_results into session_sources immediately.
+
+        Called after each step so sources appear in the frontend
+        during the session rather than only at completion.
+        """
+        if not self._enable_persistence:
+            return
+        try:
+            await self._init_session_manager(state)
+            if self._session_manager is None:
+                return
+            await self._session_manager.sync_sources(research_results)
+        except Exception as exc:
+            logger.debug("Real-time source sync failed: %s", exc)
 
     async def _call_newsletter_agent(
         self,
@@ -1351,6 +1487,17 @@ Rules:
             )
             state["analysis_results"] = analysis
             logger.info("Analyzer completed")
+
+            # Mark analysis plan step as DONE so the sidebar reflects it
+            plan = state.get("plan", [])
+            for step in plan:
+                if str(step.get("step_type", "")).lower() == "analysis":
+                    step["status"] = StepStatus.DONE
+                    step["completed_at"] = datetime.now().isoformat()
+                    step["result"] = f"Analysis completed ({len(analysis)} chars)"
+                    break
+            state["plan"] = plan
+
         except Exception as exc:
             logger.error("Analyzer failed: %s", exc)
             state["errors"] = state.get("errors", []) + [f"Analyzer error: {exc}"]
@@ -1435,6 +1582,16 @@ Rules:
             state["synthesis_result"] = report[:500] + "..." if len(report) > 500 else report
             state["completed_at"] = datetime.now().isoformat()
             logger.info("Synthesizer completed report (%d chars)", len(report))
+
+            # Mark the synthesis plan step as DONE so the sidebar shows it completed
+            plan = state.get("plan", [])
+            for step in plan:
+                if str(step.get("step_type", "")).lower() == "synthesis":
+                    step["status"] = StepStatus.DONE
+                    step["completed_at"] = datetime.now().isoformat()
+                    step["result"] = f"Report generated ({len(report)} chars)"
+                    break
+            state["plan"] = plan
 
             await self._persist_research_session(state, task)
             

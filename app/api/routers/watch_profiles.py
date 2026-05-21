@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
+from app.core.research_brief import build_research_brief
 from app.db.base import async_session_factory
 from app.db.models import WatchProfile
 from app.db.repositories import WatchProfileRepository
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/watch-profiles", tags=["Watch Profiles"])
 
 class WatchProfileCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
+    subject: str = Field(..., min_length=1, max_length=500)
     topics: list[str] = Field(default_factory=list)
     depth: str = Field("standard", pattern="^(brief|standard|deep)$")
     format: str = Field("report", pattern="^(digest|report|newsletter)$")
@@ -40,6 +42,7 @@ class WatchProfileCreate(BaseModel):
 
 class WatchProfileUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=200)
+    subject: Optional[str] = Field(None, min_length=1, max_length=500)
     topics: Optional[list[str]] = None
     depth: Optional[str] = Field(None, pattern="^(brief|standard|deep)$")
     format: Optional[str] = Field(None, pattern="^(digest|report|newsletter)$")
@@ -59,6 +62,7 @@ class WatchProfileUpdate(BaseModel):
 class WatchProfileResponse(BaseModel):
     id: str
     name: str
+    subject: Optional[str]
     topics: list[str]
     depth: str
     format: str
@@ -82,6 +86,7 @@ class WatchProfileResponse(BaseModel):
         return cls(
             id=str(p.id),
             name=p.name,
+            subject=p.subject or p.name,
             topics=list(p.topics or []),
             depth=p.depth,
             format=p.format,
@@ -181,8 +186,10 @@ async def run_profile(profile_id: str, body: RunProfileRequest) -> dict[str, Any
     from app.config.settings import get_settings
 
     ctx = WatchContext.from_profile(profile)
-    task = body.task_override or (
-        f"Tech watch: {', '.join(ctx.topics)}" if ctx.topics else "Weekly tech watch"
+    task = body.task_override or build_research_brief(
+        profile.subject or profile.name,
+        ctx.topics or None,
+        profile.focus,
     )
 
     try:

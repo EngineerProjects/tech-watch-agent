@@ -93,11 +93,21 @@ class SemanticScholarTool(BaseTool):
             if self._api_key:
                 headers["x-api-key"] = self._api_key
 
+            import asyncio as _asyncio
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.get(
-                    SEMANTIC_SCHOLAR_URL, params=request_params, headers=headers
-                )
-                resp.raise_for_status()
+                for attempt in range(3):
+                    resp = await client.get(
+                        SEMANTIC_SCHOLAR_URL, params=request_params, headers=headers
+                    )
+                    if resp.status_code == 429:
+                        wait = 2 ** attempt
+                        logger.warning("Semantic Scholar rate limit, retrying in %ds", wait)
+                        await _asyncio.sleep(wait)
+                        continue
+                    resp.raise_for_status()
+                    break
+                else:
+                    resp.raise_for_status()
 
             data = resp.json()
             papers = []

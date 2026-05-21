@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,6 +25,8 @@ from app.db.models import (
     PlanVersion,
     ResearchSession,
     SessionCheckpoint,
+    SessionSource,
+    SessionStep,
     ToolExecution,
     User,
     UserTopic,
@@ -472,6 +474,140 @@ class ResearchSessionRepository:
         )
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
+
+    async def delete(self, session_id: uuid.UUID) -> bool:
+        """Delete a research session and all cascade-linked session entities."""
+        session_obj = await self.get_by_id(session_id)
+        if not session_obj:
+            return False
+        await self.session.delete(session_obj)
+        await self.session.flush()
+        return True
+
+
+class SessionStepRepository:
+    """Repository for normalized session steps."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def replace_for_session(self, session_id: uuid.UUID, steps: list[SessionStep]) -> None:
+        await self.session.execute(delete(SessionStep).where(SessionStep.session_id == session_id))
+        if steps:
+            self.session.add_all(steps)
+        await self.session.flush()
+
+    async def list_for_session(self, session_id: uuid.UUID) -> Sequence[SessionStep]:
+        result = await self.session.execute(
+            select(SessionStep)
+            .where(SessionStep.session_id == session_id)
+            .order_by(SessionStep.step_index.asc())
+        )
+        return result.scalars().all()
+
+
+class SessionSourceRepository:
+    """Repository for normalized session sources."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def replace_for_session(self, session_id: uuid.UUID, sources: list[SessionSource]) -> None:
+        await self.session.execute(delete(SessionSource).where(SessionSource.session_id == session_id))
+        if sources:
+            self.session.add_all(sources)
+        await self.session.flush()
+
+    async def list_recent(
+        self,
+        *,
+        limit: int = 100,
+        session_id: Optional[uuid.UUID] = None,
+        query: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> list[dict]:
+        stmt = (
+            select(SessionSource, ResearchSession)
+            .join(ResearchSession, ResearchSession.id == SessionSource.session_id)
+        )
+        if session_id:
+            stmt = stmt.where(SessionSource.session_id == session_id)
+        if source:
+            stmt = stmt.where(func.lower(SessionSource.source) == source.lower())
+        if query:
+            like = f"%{query.lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(SessionSource.title).like(like),
+                    func.lower(SessionSource.url).like(like),
+                    func.lower(func.coalesce(SessionSource.summary, "")).like(like),
+                    func.lower(func.coalesce(ResearchSession.research_brief, "")).like(like),
+                )
+            )
+
+        stmt = stmt.order_by(SessionSource.created_at.desc()).limit(limit)
+
+        result = await self.session.execute(stmt)
+        rows = []
+        for source_row, research_session in result.all():
+            rows.append({
+                "id": str(source_row.id),
+                "session_id": str(source_row.session_id),
+                "session_brief": research_session.research_brief,
+                "step_id": source_row.step_id,
+                "step_name": source_row.step_name,
+                "article_id": str(source_row.article_id) if source_row.article_id else None,
+                "title": source_row.title,
+                "url": source_row.url,
+                "source": source_row.source,
+                "topic": source_row.topic,
+                "summary": source_row.summary,
+                "published_date": source_row.published_date.isoformat() if source_row.published_date else None,
+                "relevance_score": source_row.relevance_score,
+                "tool_name": source_row.tool_name,
+                "created_at": source_row.created_at.isoformat() if source_row.created_at else None,
+            })
+
+        if rows:
+            return rows
+
+        from app.services.session_manager import extract_normalized_sources
+
+        fallback_stmt = select(ResearchSession).order_by(ResearchSession.updated_at.desc()).limit(limit)
+        if session_id:
+            fallback_stmt = fallback_stmt.where(ResearchSession.id == session_id)
+
+        fallback_result = await self.session.execute(fallback_stmt)
+        fallback_rows = []
+        for research_session in fallback_result.scalars().all():
+            for item in extract_normalized_sources(research_session.research_results or []):
+                row = {
+                    "id": f"fallback-{research_session.id}-{item['step_id'] or 'na'}-{abs(hash(item['url']))}",
+                    "session_id": str(research_session.id),
+                    "session_brief": research_session.research_brief,
+                    "step_id": item["step_id"],
+                    "step_name": item["step_name"],
+                    "article_id": None,
+                    "title": item["title"],
+                    "url": item["url"],
+                    "source": item["source"],
+                    "topic": item["topic"],
+                    "summary": item["summary"],
+                    "published_date": item["published_date"].isoformat() if item["published_date"] else None,
+                    "relevance_score": item["relevance_score"],
+                    "tool_name": item["tool_name"],
+                    "created_at": research_session.updated_at.isoformat() if research_session.updated_at else None,
+                }
+                if source and row["source"].lower() != source.lower():
+                    continue
+                if query:
+                    haystack = " ".join(str(row.get(key) or "").lower() for key in ("title", "summary", "session_brief", "source", "topic"))
+                    if query.lower() not in haystack:
+                        continue
+                fallback_rows.append(row)
+                if len(fallback_rows) >= limit:
+                    return fallback_rows
+        return fallback_rows
 
 
 class ToolExecutionRepository:

@@ -25,6 +25,88 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 
+def parse_optional_datetime(value: Any) -> Optional[datetime]:
+    """Parse ISO datetimes stored in JSON payloads."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def extract_normalized_sources(research_results: Any) -> list[dict[str, Any]]:
+    """Flatten persisted research results into normalized source rows."""
+    if not isinstance(research_results, list):
+        return []
+
+    sources: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in research_results:
+        if not isinstance(item, dict):
+            continue
+
+        step_id = item.get("step_id") if isinstance(item.get("step_id"), str) else None
+        step_name = item.get("step_name") if isinstance(item.get("step_name"), str) else None
+        tool_name = item.get("tool") if isinstance(item.get("tool"), str) else None
+
+        if isinstance(item.get("data"), list):
+            candidates = item.get("data", [])
+        else:
+            candidates = [item]
+
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            url = candidate.get("url")
+            if not isinstance(url, str) or not url:
+                continue
+            dedupe_key = (step_id or "", tool_name or "", url)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            title = candidate.get("title") or candidate.get("name") or url
+            source_name = candidate.get("source") or tool_name or "web"
+            topic = candidate.get("topic") if isinstance(candidate.get("topic"), str) else None
+            summary = candidate.get("summary") if isinstance(candidate.get("summary"), str) else None
+            published_date = parse_optional_datetime(candidate.get("published_date") or candidate.get("date"))
+            raw_relevance = candidate.get("relevance_score")
+            if isinstance(raw_relevance, (int, float)):
+                relevance_score = float(raw_relevance)
+            else:
+                relevance_score = None
+
+            sources.append({
+                "step_id": step_id,
+                "step_name": step_name,
+                "title": str(title),
+                "url": url,
+                "source": str(source_name),
+                "topic": topic,
+                "summary": summary,
+                "published_date": published_date,
+                "relevance_score": relevance_score,
+                "tool_name": tool_name,
+                "meta_data": candidate,
+            })
+
+    return sources
+
+
+def normalize_plan_payload(plan: Any) -> list[dict[str, Any]]:
+    """Return a consistent list-of-steps shape for plan payloads."""
+    if isinstance(plan, list):
+        return [step for step in plan if isinstance(step, dict)]
+    if isinstance(plan, dict):
+        steps = plan.get("steps")
+        if isinstance(steps, list):
+            return [step for step in steps if isinstance(step, dict)]
+    return []
+
+
 class SessionPhase(str, Enum):
     """Session phases for tracking progress."""
     PLAN = "plan"
@@ -114,6 +196,83 @@ class SessionManager:
         """Get current session phase."""
         return self._phase
 
+    async def _sync_normalized_steps(self, plan: list[dict[str, Any]]) -> None:
+        from app.db.models import SessionStep
+        from app.db.repositories import SessionStepRepository
+
+        if not self._db_session:
+            return
+
+        records = [
+            SessionStep(
+                id=uuid.uuid4(),
+                session_id=self.session_id,
+                step_id=str(step.get("step_id") or f"step_{idx}"),
+                step_index=idx,
+                name=str(step.get("name") or f"Step {idx + 1}"),
+                description=step.get("description"),
+                step_type=str(step.get("step_type") or "research"),
+                tool_name=step.get("tool_name"),
+                status=str(step.get("status") or "pending"),
+                result=step.get("result"),
+                error=step.get("error"),
+                started_at=parse_optional_datetime(step.get("started_at")),
+                completed_at=parse_optional_datetime(step.get("completed_at")),
+            )
+            for idx, step in enumerate(plan)
+            if isinstance(step, dict)
+        ]
+        await SessionStepRepository(self._db_session).replace_for_session(self.session_id, records)
+
+    async def _sync_normalized_sources(self, research_results: list[dict[str, Any]]) -> None:
+        from app.db.models import SessionSource
+        from app.db.repositories import ArticleRepository, SessionSourceRepository
+
+        if not self._db_session:
+            return
+
+        article_repo = ArticleRepository(self._db_session)
+        records = []
+        for source in extract_normalized_sources(research_results):
+            article = await article_repo.get_by_url(source["url"])
+            records.append(SessionSource(
+                id=uuid.uuid4(),
+                session_id=self.session_id,
+                step_id=source["step_id"],
+                step_name=source["step_name"],
+                article_id=article.id if article else None,
+                title=source["title"],
+                url=source["url"],
+                source=source["source"],
+                topic=source["topic"],
+                summary=source["summary"],
+                published_date=source["published_date"],
+                relevance_score=source["relevance_score"],
+                tool_name=source["tool_name"],
+                meta_data=source["meta_data"],
+            ))
+
+        await SessionSourceRepository(self._db_session).replace_for_session(self.session_id, records)
+
+    async def sync_sources(self, research_results: list[dict]) -> None:
+        """Public helper: persist current in-memory sources and commit.
+
+        Called after each research step so sources appear in the frontend
+        during the session without waiting for final completion.
+        """
+        if not self._db_session:
+            return
+        try:
+            await self._sync_normalized_sources(research_results)
+            await self._db_session.commit()
+            logger.debug("Sources synced: %d research results", len(research_results))
+        except Exception as exc:
+            logger.warning("Source sync failed: %s", exc)
+            try:
+                await self._db_session.rollback()
+            except Exception:
+                pass
+
     async def save_phase(
         self,
         phase: SessionPhase,
@@ -137,24 +296,28 @@ class SessionManager:
             return
 
         try:
+            normalized_plan = normalize_plan_payload(plan)
+
             # Create plan version
             new_version = PlanVersion(
                 id=uuid.uuid4(),
                 session_id=self.session_id,
                 version=self._session.plan_version + 1,
-                plan={"steps": plan, "current_index": current_step_index},
+                plan=normalized_plan,
                 reason=reason,
             )
             self._db_session.add(new_version)
 
             # Update session
             self._session.phase = phase.value
-            self._session.plan = {"steps": plan}
+            self._session.plan = normalized_plan
             self._session.plan_version = self._session.plan_version + 1
             self._session.current_step_index = current_step_index
             self._session.status = "completed" if phase == SessionPhase.COMPLETED else "running"
             self._session.updated_at = datetime.now()
 
+            await self._sync_normalized_steps(normalized_plan)
+            await self._sync_normalized_sources(self._session.research_results or [])
             await self._db_session.commit()
             
             self._phase = phase
@@ -341,6 +504,9 @@ class SessionManager:
                         existing_urls.add(result["url"])
 
             self._session.updated_at = datetime.now()
+
+            await self._sync_normalized_steps(normalize_plan_payload(self._session.plan))
+            await self._sync_normalized_sources(self._session.research_results or [])
             await self._db_session.commit()
 
         except Exception as exc:
@@ -359,6 +525,9 @@ class SessionManager:
         try:
             self._session.analysis_results = analysis
             self._session.updated_at = datetime.now()
+
+            await self._sync_normalized_steps(normalize_plan_payload(self._session.plan))
+            await self._sync_normalized_sources(self._session.research_results or [])
             await self._db_session.commit()
 
         except Exception as exc:
@@ -391,7 +560,7 @@ class SessionManager:
                 self._session.phase = phase.value
                 self._phase = phase
             if plan is not None:
-                self._session.plan = {"steps": plan}
+                self._session.plan = normalize_plan_payload(plan)
             if current_step_index is not None:
                 self._session.current_step_index = current_step_index
             if research_results is not None:
@@ -626,36 +795,39 @@ async def create_session(
     task: str,
     user_id: Optional[uuid.UUID] = None,
     topics: Optional[list[str]] = None,
+    session_id: Optional[uuid.UUID] = None,
+    meta_data: Optional[dict[str, Any]] = None,
 ) -> uuid.UUID:
     """Create a new research session.
-    
+
     Args:
         task: Research task/brief
         user_id: Optional user ID
         topics: Optional list of topics
-        
+        session_id: Use this UUID instead of generating a new one
+
     Returns:
-        New session ID
+        Session ID (new or provided)
     """
     from app.db.base import get_db_context
     from app.db.models import ResearchSession
-    
-    session_id = uuid.uuid4()
-    
+
+    sid = session_id or uuid.uuid4()
+
     async with get_db_context() as db:
         session = ResearchSession(
-            id=session_id,
+            id=sid,
             user_id=user_id,
             research_brief=task,
-            status="created",
+            status="running",
             phase="plan",
-            meta_data={"topics": topics or []},
+            meta_data={**(meta_data or {}), "topics": topics or []},
         )
         db.add(session)
         await db.commit()
-        
-        logger.info("Created research session: %s", session_id)
-        return session_id
+
+        logger.info("Created research session: %s", sid)
+        return sid
 
 
 async def get_session(session_id: uuid.UUID) -> Optional[dict]:

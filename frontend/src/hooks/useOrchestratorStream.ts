@@ -5,15 +5,35 @@ export interface StreamArticle {
   title: string;
   url: string;
   source: string;
+  tool?: string;
+  step_id?: string;
   published_date?: string;
   summary?: string;
   relevance_score?: number;
 }
 
-export const useOrchestratorStream = (url: string | null) => {
+export interface StepResult {
+  tool: string;
+  count: number;
+  articles: StreamArticle[];
+}
+
+export interface BusEvent { type: string; data: any }
+
+/**
+ * Subscribe function type: caller provides a callback and receives an unsubscribe fn.
+ * Used to connect to a shared EventSource managed by App.tsx instead of opening a new one.
+ */
+export type SubscribeFn = (cb: (evt: BusEvent) => void) => () => void;
+
+export const useOrchestratorStream = (
+  url: string | null,
+  subscribe?: SubscribeFn,
+) => {
   const [report, setReport] = useState('');
   const [plan, setPlan] = useState<PlanStep[]>([]);
   const [articles, setArticles] = useState<StreamArticle[]>([]);
+  const [stepResults, setStepResults] = useState<Record<string, StepResult>>({});
   const [phase, setPhase] = useState('idle');
   const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -21,72 +41,86 @@ export const useOrchestratorStream = (url: string | null) => {
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    if (!url) return;
-
-    // Reset
     setReport('');
     setPlan([]);
     setArticles([]);
-    setPhase('initializing');
-    setStatus('running');
+    setStepResults({});
     setError(null);
     setSessionId(null);
 
+    // Only mark as running when actually connected to a stream
+    if (url || subscribe) {
+      setPhase('initializing');
+      setStatus('running');
+    } else {
+      setPhase('idle');
+      setStatus('idle');
+    }
+
+    const handleEvent = (type: string, data: any) => {
+      if (type === 'session_created') {
+        setSessionId(data.session_id ?? null);
+      } else if (type === 'phase_transition') {
+        setPhase(data.phase ?? '');
+      } else if (type === 'plan_updated') {
+        if (Array.isArray(data.plan)) setPlan(data.plan);
+      } else if (type === 'research_result') {
+        const stepId: string | undefined = data.step_id;
+        const tool: string = data.tool ?? '';
+        const count: number = data.count ?? 0;
+        const incoming: StreamArticle[] = (data.articles ?? [])
+          .filter((a: any) => a.url)
+          .map((a: any) => ({ ...a, tool, step_id: stepId }));
+        if (incoming.length > 0) {
+          setArticles(prev => {
+            const seen = new Set(prev.map(a => a.url));
+            return [...prev, ...incoming.filter((a: StreamArticle) => !seen.has(a.url))];
+          });
+        }
+        if (stepId) {
+          setStepResults(prev => ({ ...prev, [stepId]: { tool, count, articles: incoming } }));
+        }
+      } else if (type === 'report_chunk') {
+        if (data.chunk) setReport(prev => prev + data.chunk);
+      } else if (type === 'report_completed') {
+        setPhase('completed');
+      } else if (type === 'session_completed') {
+        setStatus('completed');
+        setPhase('done');
+      } else if (type === 'session_failed') {
+        setError(data.error ?? 'Erreur inconnue');
+        setStatus('failed');
+        setPhase('failed');
+      }
+    };
+
+    // Subscribe mode: use the shared event bus from App.tsx
+    if (subscribe) {
+      const unsubscribe = subscribe((evt) => {
+        try { handleEvent(evt.type, evt.data); } catch { /* noop */ }
+      });
+      return unsubscribe;
+    }
+
+    if (!url) return;
+
+    // Normal mode: open a dedicated EventSource
     const es = new EventSource(url);
     esRef.current = es;
 
-    es.addEventListener('session_created', (e) => {
-      const data = JSON.parse(e.data);
-      setSessionId(data.session_id ?? null);
-    });
+    const EVENT_TYPES = [
+      'session_created', 'phase_transition', 'plan_updated',
+      'research_result', 'report_chunk', 'report_completed',
+      'session_completed', 'session_failed',
+    ] as const;
 
-    es.addEventListener('phase_transition', (e) => {
-      const data = JSON.parse(e.data);
-      setPhase(data.phase ?? '');
-    });
-
-    es.addEventListener('plan_updated', (e) => {
-      const data = JSON.parse(e.data);
-      if (Array.isArray(data.plan)) setPlan(data.plan);
-    });
-
-    es.addEventListener('research_result', (e) => {
-      const data = JSON.parse(e.data);
-      const incoming: StreamArticle[] = (data.articles ?? []).filter((a: StreamArticle) => a.url);
-      if (incoming.length > 0) {
-        setArticles(prev => {
-          const existingUrls = new Set(prev.map(a => a.url));
-          const newOnes = incoming.filter(a => !existingUrls.has(a.url));
-          return [...prev, ...newOnes];
-        });
-      }
-    });
-
-    es.addEventListener('report_chunk', (e) => {
-      const data = JSON.parse(e.data);
-      if (data.chunk) setReport(prev => prev + data.chunk);
-    });
-
-    es.addEventListener('report_completed', () => {
-      // report is fully assembled via chunks; mark phase done
-      setPhase('completed');
-    });
-
-    es.addEventListener('session_completed', () => {
-      setStatus('completed');
-      setPhase('done');
-      es.close();
-    });
-
-    es.addEventListener('session_failed', (e) => {
-      const data = JSON.parse(e.data);
-      setError(data.error ?? 'Erreur inconnue');
-      setStatus('failed');
-      es.close();
-    });
+    for (const type of EVENT_TYPES) {
+      es.addEventListener(type, (e) => {
+        try { handleEvent(type, JSON.parse((e as MessageEvent).data)); } catch { /* noop */ }
+      });
+    }
 
     es.onerror = () => {
-      // Only treat as error if we never completed
       setStatus(prev => prev === 'running' ? 'failed' : prev);
       setError(prev => prev ?? 'Connexion SSE perdue');
       es.close();
@@ -96,7 +130,7 @@ export const useOrchestratorStream = (url: string | null) => {
       es.close();
       esRef.current = null;
     };
-  }, [url]);
+  }, [url, subscribe]);
 
-  return { report, plan, articles, phase, status, error, sessionId };
+  return { report, plan, articles, stepResults, phase, status, error, sessionId };
 };

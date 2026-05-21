@@ -17,10 +17,52 @@ from fastapi import APIRouter, HTTPException, Query
 from app.db.base import async_session_factory
 from app.db.repositories import ResearchSessionRepository
 from app.core.logging import get_logger
+from app.services.session_manager import normalize_plan_payload
 
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
+
+
+def _session_title(session: Any) -> str:
+    meta = session.meta_data if isinstance(session.meta_data, dict) else {}
+    title = meta.get("title") or meta.get("subject") or session.research_brief
+    return str(title)
+
+
+def _session_subject(session: Any) -> Optional[str]:
+    meta = session.meta_data if isinstance(session.meta_data, dict) else {}
+    subject = meta.get("subject")
+    return str(subject) if isinstance(subject, str) and subject.strip() else None
+
+
+def _session_research_instructions(session: Any) -> Optional[str]:
+    meta = session.meta_data if isinstance(session.meta_data, dict) else {}
+    value = meta.get("research_instructions")
+    return str(value) if isinstance(value, str) and value.strip() else None
+
+
+def _serialize_session_summary(session: Any) -> dict[str, Any]:
+    title = _session_title(session)
+    research_brief = session.research_brief[:200] + "..." if len(session.research_brief) > 200 else session.research_brief
+    meta = session.meta_data if isinstance(session.meta_data, dict) else {}
+    return {
+        "id": str(session.id),
+        "title": title,
+        "subject": _session_subject(session),
+        "research_instructions": _session_research_instructions(session),
+        "research_brief": research_brief,
+        "meta_data": meta,
+        "status": session.status,
+        "phase": session.phase,
+        "plan_version": session.plan_version,
+        "compaction_version": session.compaction_version,
+        "iterations_count": session.iterations_count,
+        "has_checkpoint": session.phase in ["research", "collection", "analysis"],
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "updated_at": session.updated_at.isoformat() if session.updated_at else None,
+        "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+    }
 
 
 @router.get("")
@@ -43,22 +85,7 @@ async def list_sessions(
             sessions = await repo.get_recent(user_uuid, limit)
 
         return {
-            "sessions": [
-                {
-                    "id": str(s.id),
-                    "research_brief": s.research_brief[:200] + "..." if len(s.research_brief) > 200 else s.research_brief,
-                    "status": s.status,
-                    "phase": s.phase,
-                    "plan_version": s.plan_version,
-                    "compaction_version": s.compaction_version,
-                    "iterations_count": s.iterations_count,
-                    "has_checkpoint": s.phase in ["research", "collection", "analysis"],
-                    "created_at": s.created_at.isoformat() if s.created_at else None,
-                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-                    "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-                }
-                for s in sessions
-            ],
+            "sessions": [_serialize_session_summary(s) for s in sessions],
             "total": len(sessions),
         }
 
@@ -73,15 +100,9 @@ async def list_interruptible_sessions() -> dict[str, Any]:
         return {
             "sessions": [
                 {
-                    "id": str(s.id),
-                    "research_brief": s.research_brief[:200] + "..." if len(s.research_brief) > 200 else s.research_brief,
-                    "status": s.status,
-                    "phase": s.phase,
-                    "plan_version": s.plan_version,
+                    **_serialize_session_summary(s),
                     "current_step_index": s.current_step_index,
                     "has_checkpoint": True,
-                    "created_at": s.created_at.isoformat() if s.created_at else None,
-                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
                 }
                 for s in sessions
             ],
@@ -114,6 +135,9 @@ async def get_session(session_id: str) -> dict[str, Any]:
         return {
             "id": str(research_session.id),
             "user_id": str(research_session.user_id) if research_session.user_id else None,
+            "title": _session_title(research_session),
+            "subject": _session_subject(research_session),
+            "research_instructions": _session_research_instructions(research_session),
             "research_brief": research_session.research_brief,
             "status": research_session.status,
             "phase": research_session.phase,
@@ -125,7 +149,7 @@ async def get_session(session_id: str) -> dict[str, Any]:
             "plan_version": research_session.plan_version,
             "current_step_index": research_session.current_step_index,
             "compaction_version": research_session.compaction_version,
-            "plan": research_session.plan,
+            "plan": normalize_plan_payload(research_session.plan),
             "research_results": research_session.research_results,
             "analysis_results": research_session.analysis_results,
             "compacted_memory": research_session.compacted_memory,
@@ -172,12 +196,12 @@ async def get_session_plan_versions(session_id: str) -> dict[str, Any]:
         return {
             "session_id": session_id,
             "current_version": research_session.plan_version,
-            "current_plan": research_session.plan,
+            "current_plan": normalize_plan_payload(research_session.plan),
             "current_step_index": research_session.current_step_index,
             "versions": [
                 {
                     "version": pv.version,
-                    "plan": pv.plan,
+                    "plan": normalize_plan_payload(pv.plan),
                     "reason": pv.reason,
                     "created_at": pv.created_at.isoformat() if pv.created_at else None,
                 }
@@ -331,3 +355,19 @@ def _get_resume_instructions(phase: str) -> str:
     )
 
 
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(session_id: str) -> None:
+    """Delete a research session and all persisted session-specific entities."""
+    try:
+        session_uuid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session ID format")
+
+    async with async_session_factory() as session:
+        repo = ResearchSessionRepository(session)
+        deleted = await repo.delete(session_uuid)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Session not found")
+        await session.commit()

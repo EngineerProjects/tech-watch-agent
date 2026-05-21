@@ -36,7 +36,8 @@ make up-build
 ```
 
 Accès :
-- Dashboard : `http://localhost:8000/ui`
+- Frontend React/Vite : `http://localhost:3000`
+- Dashboard legacy FastAPI/Jinja : `http://localhost:8000/ui`
 - API docs : `http://localhost:8000/docs`
 - Health : `http://localhost:8000/health`
 

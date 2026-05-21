@@ -25,6 +25,7 @@ from app.agents.orchestrator.state import OrchestratorState
 from app.agents.orchestrator.nodes import OrchestratorNodes
 from app.config.settings import Settings, get_settings
 from app.core.logging import get_logger
+from app.core.research_brief import build_research_brief, derive_session_title
 
 
 logger = get_logger(__name__)
@@ -83,7 +84,7 @@ class OrchestratorAgent(BaseAgent):
             self._nodes = OrchestratorNodes(
                 max_articles=5,
                 min_sources=2,
-                enable_session_persistence=self._config.enable_checkpointing,
+                enable_session_persistence=self._config.enable_session_persistence,
             )
 
         graph_builder = OrchestratorGraphBuilder(
@@ -115,14 +116,25 @@ class OrchestratorAgent(BaseAgent):
         """
         start_time = datetime.now()
 
+        subject: Optional[str] = None
+        research_instructions: Optional[str] = None
+        title: Optional[str] = None
+
         if isinstance(input_data, str):
             task = input_data
             topics: Optional[list[str]] = None
             send_email = True
+            autonomous = self._config.autonomous
         elif isinstance(input_data, dict):
+            subject = input_data.get("subject") or None
+            research_instructions = input_data.get("research_instructions") or None
+            title = input_data.get("title") or None
             task = input_data.get("task", str(input_data))
             topics = input_data.get("topics")
             send_email = input_data.get("send_email", True)
+            autonomous = input_data.get("autonomous", self._config.autonomous)
+            if subject:
+                task = build_research_brief(subject, topics, research_instructions)
             if session_id is None:
                 session_id = input_data.get("session_id")
             if memory_context is None:
@@ -131,6 +143,7 @@ class OrchestratorAgent(BaseAgent):
             task = str(input_data)
             topics = None
             send_email = True
+            autonomous = self._config.autonomous
 
         logger.info("Orchestrator starting task: %s", task[:100])
 
@@ -144,7 +157,15 @@ class OrchestratorAgent(BaseAgent):
         if session_uuid is None:
             from app.services.session_manager import create_session as create_research_session
 
-            session_uuid = await create_research_session(task=task, topics=topics)
+            session_uuid = await create_research_session(
+                task=task,
+                topics=topics,
+                meta_data={
+                    "title": derive_session_title(title=title, subject=subject, task=task),
+                    "subject": subject or derive_session_title(task=task),
+                    "research_instructions": research_instructions,
+                },
+            )
             session_id = str(session_uuid)
 
         if self._nodes is not None:
@@ -188,7 +209,7 @@ class OrchestratorAgent(BaseAgent):
                 "task_id": f"orch_{session_uuid}",
                 "topics": topics or [],
                 "send_email": send_email,
-                "metadata": {"topics": topics or []},
+                "metadata": {"topics": topics or [], "subject": subject, "research_instructions": research_instructions, "title": derive_session_title(title=title, subject=subject, task=task)},
                 "plan": [],
                 "current_step_index": 0,
                 "articles": [],
@@ -209,7 +230,7 @@ class OrchestratorAgent(BaseAgent):
                 "started_at": None,
                 "completed_at": None,
                 "approval_threshold": self._config.approval_threshold,
-                "autonomous": self._config.autonomous,
+                "autonomous": autonomous,
                 "plan_attempts": 0,
                 "max_plan_retries": 3,
                 "resumed_from_checkpoint": False,

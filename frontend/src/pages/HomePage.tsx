@@ -106,7 +106,7 @@ const RecentInvestigationRow = ({ session, onClick }: { session: ResearchSession
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0 }}>
         <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {session.research_brief}
+          {session.title || session.subject || session.research_brief}
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', backgroundColor: 'rgba(255,255,255,0.03)', padding: '2px 8px', borderRadius: '4px', textTransform: 'capitalize' }}>

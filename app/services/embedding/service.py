@@ -47,6 +47,10 @@ class EmbeddingService:
         print(result.embedding)
     """
 
+    # Class-level sentinel: once ALL providers have failed in this process,
+    # skip the whole retry chain and return the deterministic fallback instantly.
+    _providers_all_failed: bool = False
+
     def __init__(
         self,
         provider: Optional[str] = None,
@@ -77,6 +81,10 @@ class EmbeddingService:
         Returns:
             EmbeddingResult with embedding vector
         """
+        # Fast path: all providers already known to be down in this process
+        if EmbeddingService._providers_all_failed:
+            return self._embed_fallback(text)
+
         cache_key = self._cache_key(text)
         if cache_key in self._cache:
             return EmbeddingResult(
@@ -241,17 +249,21 @@ class EmbeddingService:
             raise
 
     async def _embed_with_fallback(self, text: str, failed_provider: str) -> EmbeddingResult:
-        """Try alternate providers before using the deterministic fallback."""
+        """Try alternate providers before using the deterministic fallback.
+
+        No sleep between providers: auth errors (401/404) are deterministic,
+        backoff only adds latency without any benefit.
+        """
         providers = self._fallback_providers(failed_provider)
-        for attempt, provider in enumerate(providers, start=1):
-            if attempt > 1:
-                await self._sleep_with_backoff(attempt - 1)
+        for provider in providers:
             try:
                 return await self._embed_via_provider(provider, text)
             except Exception as exc:
                 logger.warning("Fallback provider %s failed: %s", provider, exc)
 
-        logger.warning("All embedding providers failed, using deterministic fallback")
+        # All providers exhausted — mark at class level so future calls skip the chain
+        logger.warning("All embedding providers failed, switching to deterministic fallback")
+        EmbeddingService._providers_all_failed = True
         return self._embed_fallback(text)
 
     def _embed_fallback(self, text: str) -> EmbeddingResult:
