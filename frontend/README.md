@@ -1,29 +1,37 @@
 # Frontend Tech Watch Agent
 
-Interface React + TypeScript du projet `tech-watch-agent`.
+Le frontend React/TypeScript du projet vit dans ce dossier, mais la documentation canonique reste au niveau racine.
 
-## Development
+## Voir en priorité
+
+- [README racine](../README.md)
+- [Guide de contribution](../CONTRIBUTING.md)
+- [État actuel du projet](../docs/PROJECT_STATUS.md)
+
+## Développement local
 
 ```bash
-bun install
-bun run dev
+npm install
+npm run dev
 ```
 
-Par defaut, le frontend appelle `http://localhost:8000`. Pour changer l'API cible:
+Par défaut, le frontend appelle `http://localhost:8000`.
+
+Pour changer l'API cible :
 
 ```bash
-VITE_API_URL=http://localhost:8000 bun run dev
+VITE_API_URL=http://localhost:8000 npm run dev
 ```
 
-## Verification
+## Vérification
 
 ```bash
 bunx tsc --noEmit
-bun run build
+npm run build
 ```
 
 ## Notes
 
-- Les appels API passent par `frontend/src/services/api.ts`.
+- Les appels API passent par `src/services/api.ts`.
 - Le streaming live utilise `EventSource` sur `/orchestrator/stream`.
-- En Docker/Nginx, `VITE_API_URL=/api` est l'option recommandee.
+- En Docker/Nginx, `VITE_API_URL=/api` est l'option recommandée.

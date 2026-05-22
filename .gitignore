@@ -35,3 +35,15 @@ sources/
 .idea/
 .vscode/
 *.swp
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Frontend build artifacts
+frontend/dist/
+
+# OS noise
+.DS_Store

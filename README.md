@@ -173,26 +173,32 @@ Flux cible:
 
 ```mermaid
 flowchart TD
-    UI[Frontend React / Dashboard legacy] --> API[FastAPI API]
-    API --> CFG[(AppConfig runtime DB)]
-    API --> P[(Watch Profiles)]
-    API --> G[(Email Groups)]
-    API --> ORCH[Orchestrator V2]
-    ORCH --> PLAN[Planner]
-    ORCH --> DISP[Dispatcher]
-    DISP --> FREE[free_search]
-    DISP --> WEB[web_search]
-    DISP --> RS[research_search]
-    DISP --> TOOLS[Social / PDF / Readers / GitHub]
-    ORCH --> SYN[Synthesizer]
-    SYN --> DELIV[ReportDeliveryService]
-    DELIV --> GMAIL[GmailDeliveryClient]
-    ORCH --> SM[SessionManager]
-    SM --> DB[(PostgreSQL + pgvector)]
+    UI["Frontend React / Dashboard legacy"] --> API["FastAPI API"]
+
+    API --> CFG[("AppConfig runtime DB")]
+    API --> P[("Watch Profiles")]
+    API --> G[("Email Groups")]
+    API --> ORCH["Orchestrator V2"]
+
+    ORCH --> PLAN["Planner"]
+    ORCH --> DISP["Dispatcher"]
+
+    DISP --> FREE["free_search"]
+    DISP --> WEB["web_search"]
+    DISP --> RS["research_search"]
+    DISP --> TOOLS["Social / PDF / Readers / GitHub"]
+
+    ORCH --> SYN["Synthesizer"]
+    SYN --> DELIV["ReportDeliveryService"]
+    DELIV --> GMAIL["GmailDeliveryClient"]
+
+    ORCH --> SM["SessionManager"]
+    SM --> DB[("PostgreSQL + pgvector")]
+
     P --> G
-    FREE --> SX[SearXNG]
-    WEB --> APIS[API search providers]
-    RS --> ACAD[Academic + code providers]
+    FREE --> SX["SearXNG"]
+    WEB --> APIS["API search providers"]
+    RS --> ACAD["Academic + code providers"]
 ```
 
 ```text
@@ -335,7 +341,7 @@ make hard-clean
 ## Développement local sans Docker
 
 ```bash
-pip install -e .
+pip install -e ".[dev]"
 alembic upgrade head
 python -m app.main --mode api
 ```
@@ -398,3 +404,28 @@ Le socle produit est maintenant aligné sur un modèle plus propre:
 - livraison email par groupes réutilisables,
 - recherche séparée par modes,
 - stack Docker projet autonome pour `postgres`, `redis`, `searxng`, `api`, `frontend`.
+
+
+---
+
+## Documentation utile
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) : workflow de contribution
+- [SECURITY.md](SECURITY.md) : remontée responsable des vulnérabilités
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) : règles de conduite du projet
+- [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) : état actuel du projet
+- [frontend/README.md](frontend/README.md) : notes spécifiques au frontend
+
+---
+
+## Contribution
+
+Les contributions sont bienvenues, tant qu'elles respectent le modèle produit actuel et gardent frontend, API, persistance et documentation alignés.
+
+Avant d'ouvrir une PR, lisez [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Licence
+
+Ce projet est distribué sous licence [Apache-2.0](LICENSE).

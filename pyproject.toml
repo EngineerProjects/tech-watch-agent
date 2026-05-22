@@ -5,7 +5,18 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tech-watch-agent"
 version = "0.1.0"
-description = "Automated multi-agent tech watch platform"
+description = "Automated multi-agent tech watch and research platform"
+license = { file = "LICENSE" }
+keywords = ["ai", "agents", "research", "tech-watch", "rag", "fastapi"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -37,7 +48,6 @@ dependencies = [
     "psutil>=6.1.0,<7",
     "yt-dlp>=2024.0.0,<2025",
     "youtube-transcript-api>=0.6.0,<1",
-    "pytest-asyncio>=0.23.0,<1",
     "pymupdf>=1.24.0,<2",
     "requests>=2.31.0,<3",
 ]
@@ -47,3 +57,9 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.23.0,<1",
+]
