@@ -8,6 +8,23 @@
 
 Plateforme de veille technologique multi-agents: planification, collecte multi-source, synthèse, stockage persistant et livraison email pilotée par profils.
 
+![Architecture cible](docs/captures/image.png)
+
+---
+
+## Cibles UI
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/cibles/Accueil.png" alt="Cible Accueil" /></td>
+    <td width="50%"><img src="docs/cibles/Sessions.png" alt="Cible Sessions" /></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/cibles/Session_en_cours.png" alt="Cible Session en cours" /></td>
+    <td width="50%"><img src="docs/cibles/Newsletter.png" alt="Cible Newsletter" /></td>
+  </tr>
+</table>
+
 ---
 
 ## Vue d'ensemble
