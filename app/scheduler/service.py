@@ -195,6 +195,7 @@ class OrchestratorScheduler:
         send_email: bool = True,
         autonomous: bool = True,
         watch_context: Optional[object] = None,
+        recipients_override: Optional[list[str]] = None,
     ) -> dict:
         """Run a research task through the orchestrator.
 
@@ -207,6 +208,7 @@ class OrchestratorScheduler:
             send_email: Whether to send email after completion
             autonomous: If True, runs fully automated (no human approval).
                       If False, requires human approval before sending email.
+            recipients_override: Optional explicit recipients for this run.
         """
         await self.setup(autonomous=autonomous)
         start = datetime.now()
@@ -215,9 +217,9 @@ class OrchestratorScheduler:
         self.runtime.last_error = None
 
         if self.mode == "v2":
-            return await self._run_v2(task or "", topics, send_email, start, watch_context)
+            return await self._run_v2(task or "", topics, send_email, start, watch_context, recipients_override)
         else:
-            return await self._run_v1(topics, send_email, start)
+            return await self._run_v1(topics, send_email, start, recipients_override)
 
     async def _run_v2(
         self,
@@ -226,6 +228,7 @@ class OrchestratorScheduler:
         send_email: bool,
         start: datetime,
         watch_context: Optional[object] = None,
+        recipients_override: Optional[list[str]] = None,
     ) -> dict:
         if not task:
             task = f"Weekly tech watch: {', '.join(topics or self.settings.newsletter_topics)}"
@@ -237,6 +240,8 @@ class OrchestratorScheduler:
         }
         if watch_context is not None:
             payload["watch_context"] = watch_context
+        if recipients_override is not None:
+            payload["email_recipients"] = recipients_override
 
         try:
             result = await self._orchestrator.execute(payload)
@@ -306,6 +311,7 @@ class OrchestratorScheduler:
         topics: Optional[list[str]],
         send_email: bool,
         start: datetime,
+        recipients_override: Optional[list[str]] = None,
     ) -> dict:
         try:
             if self._article_service is None:
@@ -325,6 +331,7 @@ class OrchestratorScheduler:
                 report=markdown_content,
                 subject=subject,
                 send=send_email,
+                recipients=recipients_override,
             )
             delivery_success = delivery.sent if send_email else False
 

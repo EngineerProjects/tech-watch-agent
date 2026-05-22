@@ -1,0 +1,85 @@
+use_default_settings: true
+
+general:
+  instance_name: "DevInfra SearXNG"
+  debug: false
+
+server:
+  secret_key: "devinfra-searxng-local-only"
+  limiter: false
+  image_proxy: true
+
+search:
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: ""
+  default_lang: ""
+
+# Enable academic/scientific engines that are disabled by default.
+# All standard web engines (Google, Bing, DDG, Wikipedia…) are already
+# active via use_default_settings: true — only overrides listed here.
+engines:
+  # ── Scientific publications ──────────────────────────────────────────────
+  # Query with: &categories=science  or shortcut  !arx  !gos  !pub  !se
+  - name: arxiv
+    engine: arxiv
+    shortcut: arx
+    categories: science
+    enabled: true
+
+  - name: google scholar
+    engine: google_scholar
+    shortcut: gos
+    categories: science
+    enabled: true
+
+  - name: pubmed
+    engine: pubmed
+    shortcut: pub
+    categories: science
+    enabled: true
+
+  - name: semantic scholar
+    engine: semantic_scholar
+    shortcut: se
+    categories: science
+    enabled: true
+
+  # Disabled by default — enabling here:
+  - name: crossref
+    engine: crossref
+    shortcut: cr
+    categories: science
+    enabled: true
+
+  - name: openalex
+    engine: openalex
+    shortcut: oa
+    categories: science
+    enabled: true
+
+  # ── Code / OSS discovery ────────────────────────────────────────────────
+  - name: github code
+    engine: github_code
+    shortcut: ghc
+    categories: it
+    ghc_auth:
+      type: "none"
+    enabled: true
+
+  # ── Encyclopaedic / reference ────────────────────────────────────────────
+  - name: wikidata
+    engine: wikidata
+    shortcut: wd
+    enabled: true
+
+outgoing:
+  request_timeout: 8.0
+  max_request_timeout: 15.0
+
+ui:
+  static_use_hash: false
+  default_theme: simple
+  infinite_scroll: false

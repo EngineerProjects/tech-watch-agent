@@ -1,8 +1,7 @@
-"""Multi-provider search tool.
+"""API-backed multi-provider web search.
 
-Fires SearXNG and all configured API-key providers in parallel,
-merges results and deduplicates by URL.  Providers that have no API key
-configured are silently skipped.
+Keeps paid / API-key providers separate from the free SearXNG path.
+`web_search` only uses the providers explicitly enabled in runtime settings.
 """
 
 from __future__ import annotations
@@ -16,17 +15,15 @@ from app.tools.base import BaseTool, ToolCategory, ToolResult
 
 logger = get_logger(__name__)
 
+_PROVIDER_ORDER = ("tavily", "exa", "langsearch")
+
 
 class MultiProviderSearchTool(BaseTool):
-    """Parallel search across SearXNG + configured paid providers.
+    """Parallel search across active API-backed providers.
 
-    Priority / merge strategy:
-      1. SearXNG  — always tried (self-hosted, free, multi-engine)
-      2. Tavily   — tried if TAVILY_API_KEY is set
-      3. (Exa, LangSearch) — tried if their keys are set
-
-    Results are merged and deduplicated by URL.  Items found by more than
-    one provider are kept once with the highest relevance_score.
+    SearXNG is intentionally excluded from this tool so the planner can choose
+    between a free/self-hosted path (`free_search` / `searxng`) and a
+    credit-backed path (`web_search`).
     """
 
     def __init__(self, settings: Optional[Settings] = None, max_results: int = 20) -> None:
@@ -40,7 +37,7 @@ class MultiProviderSearchTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return "Multi-provider web search (SearXNG + Tavily when available), deduped by URL"
+        return "Parallel web search across active API providers (Tavily, Exa, LangSearch), without SearXNG"
 
     @property
     def category(self) -> ToolCategory:
@@ -64,58 +61,33 @@ class MultiProviderSearchTool(BaseTool):
         if not query:
             return ToolResult(success=False, data=None, error="query is required")
 
-        categories = params.get("categories", "general,news")
-        language = params.get("language", "all")
-        time_range = params.get("time_range", "") or ""
+        active_providers = self._get_active_providers()
+        if not active_providers:
+            return ToolResult(
+                success=False,
+                data=None,
+                error="No API-backed web providers are active or configured",
+            )
 
         provider_tasks: list[asyncio.Task] = []
         provider_names: list[str] = []
-
-        # Always include SearXNG
-        try:
-            from app.tools.web.searxng import SearXNGSearchTool
-            srx_tool = SearXNGSearchTool(settings=self._settings)
-            provider_tasks.append(asyncio.create_task(
-                srx_tool.execute({"query": query, "categories": categories,
-                                  "language": language, "time_range": time_range})
-            ))
-            provider_names.append("searxng")
-        except Exception as exc:
-            logger.debug("SearXNG unavailable: %s", exc)
-
-        # Tavily if key is set
-        if self._settings.tavily_api_key:
-            try:
-                from app.tools.web.tavily import TavilySearchTool
-                tav_tool = TavilySearchTool(api_key=self._settings.tavily_api_key,
-                                            max_results=self._max_results)
-                provider_tasks.append(asyncio.create_task(
-                    tav_tool.execute({"query": query})
-                ))
-                provider_names.append("tavily")
-            except Exception as exc:
-                logger.debug("Tavily unavailable: %s", exc)
-
-        # Exa if key is set
-        if getattr(self._settings, "exa_api_key", None):
-            try:
-                from app.tools.web.exa import ExaSearchTool
-                exa_tool = ExaSearchTool(api_key=self._settings.exa_api_key,
-                                         max_results=self._max_results)
-                provider_tasks.append(asyncio.create_task(
-                    exa_tool.execute({"query": query})
-                ))
-                provider_names.append("exa")
-            except Exception as exc:
-                logger.debug("Exa unavailable: %s", exc)
+        for provider in active_providers:
+            task = self._create_task(provider, query)
+            if task is None:
+                continue
+            provider_names.append(provider)
+            provider_tasks.append(task)
 
         if not provider_tasks:
-            return ToolResult(success=False, data=None, error="No search providers configured")
+            return ToolResult(
+                success=False,
+                data=None,
+                error="No active web providers are ready to execute",
+            )
 
         raw_results = await asyncio.gather(*provider_tasks, return_exceptions=True)
 
-        # Merge and deduplicate
-        seen_urls: dict[str, dict] = {}  # url → best article dict
+        seen_urls: dict[str, dict[str, Any]] = {}
         providers_used: list[str] = []
 
         for name, res in zip(provider_names, raw_results):
@@ -138,38 +110,66 @@ class MultiProviderSearchTool(BaseTool):
                     continue
                 if url not in seen_urls:
                     seen_urls[url] = art
-                else:
-                    # Keep highest relevance_score
-                    existing_score = seen_urls[url].get("relevance_score") or 0
-                    new_score = art.get("relevance_score") or 0
-                    if new_score > existing_score:
-                        seen_urls[url] = art
+                    continue
+                existing_score = seen_urls[url].get("relevance_score") or 0
+                new_score = art.get("relevance_score") or 0
+                if new_score > existing_score:
+                    seen_urls[url] = art
 
         merged = list(seen_urls.values())[: self._max_results]
-
         if not merged:
-            logger.warning(
-                "[multi_search] All providers returned 0 results for '%s'", query[:80]
+            logger.warning("[web_search] Active providers returned 0 results for '%s'", query[:80])
+            return ToolResult(
+                success=True,
+                data=[],
+                error=None,
+                metadata={"count": 0, "providers": providers_used, "mode": "api"},
             )
-            return ToolResult(success=True, data=[], error=None,
-                              metadata={"count": 0, "providers": providers_used})
 
-        logger.info(
-            "[multi_search] %d results from %s for '%s'",
-            len(merged), providers_used, query[:60],
-        )
+        logger.info("[web_search] %d results from %s for '%s'", len(merged), providers_used, query[:60])
         return ToolResult(
             success=True,
             data=merged,
             error=None,
-            metadata={"count": len(merged), "providers": providers_used, "query": query},
+            metadata={"count": len(merged), "providers": providers_used, "query": query, "mode": "api"},
         )
 
-    # ── helpers ──────────────────────────────────────────────────────────────
+    def _get_active_providers(self) -> list[str]:
+        configured = []
+        seen: set[str] = set()
+        for provider in getattr(self._settings, "search_web_providers", []) or []:
+            normalized = str(provider).strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            if normalized not in _PROVIDER_ORDER:
+                logger.debug("Ignoring unsupported web provider '%s'", normalized)
+                continue
+            seen.add(normalized)
+            configured.append(normalized)
+        return configured
+
+    def _create_task(self, provider: str, query: str) -> asyncio.Task | None:
+        if provider == "tavily" and self._settings.tavily_api_key:
+            from app.tools.web.tavily import TavilySearchTool
+
+            tool = TavilySearchTool(api_key=self._settings.tavily_api_key, max_results=self._max_results)
+            return asyncio.create_task(tool.execute({"query": query}))
+        if provider == "exa" and self._settings.exa_api_key:
+            from app.tools.web.exa import ExaSearchTool
+
+            tool = ExaSearchTool(api_key=self._settings.exa_api_key, max_results=self._max_results)
+            return asyncio.create_task(tool.execute({"query": query}))
+        if provider == "langsearch" and self._settings.langsearch_api_key:
+            from app.tools.web.langsearch import LangSearchTool
+
+            tool = LangSearchTool(api_key=self._settings.langsearch_api_key, max_results=self._max_results)
+            return asyncio.create_task(tool.execute({"query": query}))
+
+        logger.debug("Skipping inactive or unconfigured web provider '%s'", provider)
+        return None
 
     @staticmethod
-    def _extract_articles(data: Any, provider: str) -> list[dict]:
-        """Normalise any provider output to a flat list of article dicts."""
+    def _extract_articles(data: Any, provider: str) -> list[dict[str, Any]]:
         if isinstance(data, list):
             return [
                 {
@@ -181,17 +181,13 @@ class MultiProviderSearchTool(BaseTool):
                     "relevance_score": a.get("score") or a.get("relevance_score"),
                     "provider": provider,
                 }
-                for a in data if isinstance(a, dict) and a.get("url")
+                for a in data
+                if isinstance(a, dict) and a.get("url")
             ]
 
         if isinstance(data, dict):
-            # Tavily: {"results": [...], "answer": ...}
-            results = data.get("results") or []
+            results = data.get("results") or data.get("articles") or []
             if results:
                 return MultiProviderSearchTool._extract_articles(results, provider)
-            # Generic articles key
-            articles = data.get("articles") or []
-            if articles:
-                return MultiProviderSearchTool._extract_articles(articles, provider)
 
         return []

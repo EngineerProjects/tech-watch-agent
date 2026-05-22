@@ -20,6 +20,8 @@ from sqlalchemy.orm import selectinload
 from app.db.models import (
     AppConfig,
     Article,
+    EmailGroup,
+    EmailGroupRecipient,
     NewsletterRun,
     NewsletterRunArticle,
     PlanVersion,
@@ -657,26 +659,115 @@ class ToolExecutionRepository:
         }
 
 
+class EmailGroupRepository:
+    """CRUD repository for EmailGroup entities."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    def _detail_query(self):
+        return select(EmailGroup).options(
+            selectinload(EmailGroup.recipients),
+            selectinload(EmailGroup.watch_profiles),
+        )
+
+    async def create(self, group: EmailGroup) -> EmailGroup:
+        self.session.add(group)
+        await self.session.flush()
+        return await self.get_by_id(group.id) or group
+
+    async def get_by_id(self, group_id: uuid.UUID) -> Optional[EmailGroup]:
+        result = await self.session.execute(
+            self._detail_query().where(EmailGroup.id == group_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_all(self, active_only: bool = False) -> Sequence[EmailGroup]:
+        query = self._detail_query()
+        if active_only:
+            query = query.where(EmailGroup.is_active.is_(True))
+        query = query.order_by(EmailGroup.created_at.desc())
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def update(self, group: EmailGroup) -> EmailGroup:
+        await self.session.flush()
+        return await self.get_by_id(group.id) or group
+
+    async def delete(self, group_id: uuid.UUID) -> bool:
+        group = await self.get_by_id(group_id)
+        if not group:
+            return False
+        await self.session.delete(group)
+        await self.session.flush()
+        return True
+
+    async def replace_recipients(
+        self,
+        group: EmailGroup,
+        recipients: list[dict[str, str | None]],
+    ) -> None:
+        normalized: list[dict[str, str | None]] = []
+        seen: set[str] = set()
+        for item in recipients:
+            email = str(item.get("email") or "").strip().lower()
+            if not email or email in seen:
+                continue
+            seen.add(email)
+            normalized.append({
+                "email": email,
+                "label": str(item.get("label") or "").strip() or None,
+            })
+
+        group.recipients.clear()
+        for item in normalized:
+            group.recipients.append(
+                EmailGroupRecipient(
+                    email=item["email"],
+                    label=item["label"],
+                )
+            )
+        await self.session.flush()
+
+    async def resolve_recipients_for_profile(self, profile: WatchProfile) -> list[str]:
+        recipients: list[str] = []
+        seen: set[str] = set()
+        for group in profile.email_groups:
+            if not group.is_active:
+                continue
+            for recipient in group.recipients:
+                email = recipient.email.strip().lower()
+                if not email or email in seen:
+                    continue
+                seen.add(email)
+                recipients.append(email)
+        return recipients
+
+
 class WatchProfileRepository:
     """CRUD repository for WatchProfile entities."""
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    def _detail_query(self):
+        return select(WatchProfile).options(
+            selectinload(WatchProfile.email_groups).selectinload(EmailGroup.recipients)
+        )
+
     async def create(self, profile: WatchProfile) -> WatchProfile:
         self.session.add(profile)
         await self.session.flush()
-        await self.session.refresh(profile)
-        return profile
+        return await self.get_by_id(profile.id) or profile
 
     async def get_by_id(self, profile_id: uuid.UUID) -> Optional[WatchProfile]:
         result = await self.session.execute(
-            select(WatchProfile).where(WatchProfile.id == profile_id)
+            self._detail_query().where(WatchProfile.id == profile_id)
         )
         return result.scalar_one_or_none()
 
     async def list_all(self, active_only: bool = False) -> Sequence[WatchProfile]:
-        query = select(WatchProfile)
+        query = self._detail_query()
         if active_only:
             query = query.where(WatchProfile.is_active.is_(True))
         query = query.order_by(WatchProfile.created_at.desc())
@@ -685,8 +776,7 @@ class WatchProfileRepository:
 
     async def update(self, profile: WatchProfile) -> WatchProfile:
         await self.session.flush()
-        await self.session.refresh(profile)
-        return profile
+        return await self.get_by_id(profile.id) or profile
 
     async def delete(self, profile_id: uuid.UUID) -> bool:
         profile = await self.get_by_id(profile_id)
@@ -701,3 +791,25 @@ class WatchProfileRepository:
         if profile:
             profile.last_run_at = datetime.utcnow()
             await self.session.flush()
+
+    async def set_email_groups(self, profile: WatchProfile, group_ids: list[uuid.UUID]) -> None:
+        if not group_ids:
+            profile.email_groups = []
+            await self.session.flush()
+            return
+
+        result = await self.session.execute(
+            select(EmailGroup)
+            .options(selectinload(EmailGroup.recipients))
+            .where(EmailGroup.id.in_(group_ids))
+        )
+        groups = result.scalars().all()
+        found_ids = {group.id for group in groups}
+        missing_ids = [group_id for group_id in group_ids if group_id not in found_ids]
+        if missing_ids:
+            missing = ", ".join(str(group_id) for group_id in missing_ids)
+            raise ValueError(f"Unknown email group ids: {missing}")
+
+        ordered_groups = sorted(groups, key=lambda group: group_ids.index(group.id))
+        profile.email_groups = ordered_groups
+        await self.session.flush()

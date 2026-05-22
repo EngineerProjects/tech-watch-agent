@@ -270,6 +270,7 @@ const phaseLabels: Record<string, string> = {
   dispatcher: 'Recherche en cours…',
   dispatcher_parallel: 'Recherche parallèle…',
   synthesizer: 'Synthèse du rapport…',
+  emailer: 'Envoi par email…',
   mailer: 'Envoi par email…',
   completed: 'Terminé',
   done: 'Terminé',

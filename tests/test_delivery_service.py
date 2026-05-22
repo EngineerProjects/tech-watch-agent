@@ -11,7 +11,7 @@ class _FakeRenderer:
 
 
 class _FailingGmailClient:
-    def send_email(self, subject: str, body_html: str, body_text: str) -> bool:
+    def send_email(self, subject: str, body_html: str, body_text: str, recipients=None) -> bool:
         raise AssertionError("send_email should not have been called")
 
 
@@ -19,8 +19,8 @@ class _SuccessfulGmailClient:
     def __init__(self) -> None:
         self.calls = []
 
-    def send_email(self, subject: str, body_html: str, body_text: str) -> bool:
-        self.calls.append((subject, body_html, body_text))
+    def send_email(self, subject: str, body_html: str, body_text: str, recipients=None) -> bool:
+        self.calls.append((subject, body_html, body_text, recipients))
         return True
 
 
@@ -77,3 +77,27 @@ def test_deliver_sends_when_configured():
     assert result.configured is True
     assert result.message == "Email sent: True"
     assert len(gmail.calls) == 1
+
+
+def test_deliver_uses_override_recipients_without_global_list():
+    gmail = _SuccessfulGmailClient()
+    settings = Settings(
+        sender_email="sender@example.com",
+        recipient_emails=[],
+    )
+    service = ReportDeliveryService(
+        settings=settings,
+        renderer=_FakeRenderer(),
+        gmail_client=gmail,
+    )
+
+    result = service.deliver(
+        "# Report",
+        "Tech Watch",
+        send=True,
+        recipients=["team@example.com", "ops@example.com"],
+    )
+
+    assert result.sent is True
+    assert result.configured is True
+    assert gmail.calls[0][3] == ["team@example.com", "ops@example.com"]

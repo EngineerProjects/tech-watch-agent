@@ -23,10 +23,22 @@ async def _generate_embeddings(texts: list[str]) -> dict[int, list[float]]:
     """Generate embeddings for a list of texts outside of a DB transaction.
 
     Returns a sparse dict {index → embedding} — missing keys mean the embedding
-    was skipped (no API key, import error, or provider failure).
+    was skipped (provider unavailable, import error, or provider failure).
     """
     settings = get_settings()
-    if not (settings.llm_api_key or settings.zai_api_key):
+    provider = settings.embedding_provider
+    provider_available = (
+        provider == "ollama" and bool(settings.llm_base_url)
+    ) or (
+        provider == "openai" and bool(settings.llm_api_key)
+    ) or (
+        provider == "openrouter" and bool(settings.llm_api_key and settings.llm_base_url)
+    ) or (
+        provider == "zai" and bool(settings.zai_api_key or settings.llm_api_key)
+    ) or (
+        bool(settings.llm_api_key or settings.zai_api_key)
+    )
+    if not provider_available:
         return {}
     try:
         from app.services.embedding.service import EmbeddingService
@@ -131,6 +143,7 @@ class ArticleService:
         from sqlalchemy import select
         from app.db.base import get_db_context
         from app.db.models import Article
+        from app.rag.vector_store import VectorStore
         import uuid
 
         if not articles:
@@ -166,11 +179,14 @@ class ArticleService:
         # Pass 3 — insert
         saved = 0
         async with get_db_context() as db:
+            vector_store = VectorStore(db)
             for i, article_data in enumerate(new_articles):
                 title = article_data.get("title", "").strip()
                 url = article_data.get("url", "").strip()
                 topic = article_data.get("topic", "")
                 summary = article_data.get("summary", "")
+                source = article_data.get("source", "orchestrator")
+                published_date = article_data.get("published_date")
                 relevance_score = article_data.get("relevance_score", 0)
                 if relevance_score == 0 and topic:
                     relevance_score = _compute_relevance(title, summary, topic)
@@ -181,17 +197,33 @@ class ArticleService:
                     summary=summary,
                     content=article_data.get("content", ""),
                     url=url,
-                    source=article_data.get("source", "orchestrator"),
+                    source=source,
                     topic=topic,
-                    published_date=article_data.get("published_date"),
+                    published_date=published_date,
                     relevance_score=relevance_score,
-                    embedding_vector=embeddings.get(i),
                     meta_data={
                         "tool": article_data.get("source", "unknown"),
                         "step": article_data.get("step_name", ""),
                     },
                 )
                 db.add(article)
+                await db.flush()
+
+                embedding = embeddings.get(i)
+                if embedding:
+                    await vector_store.upsert(
+                        id=str(article.id),
+                        embedding=embedding,
+                        metadata={
+                            "title": title,
+                            "url": url,
+                            "summary": summary,
+                            "topic": topic,
+                            "source": source,
+                            "published_date": published_date.isoformat() if hasattr(published_date, "isoformat") else published_date,
+                        },
+                    )
+
                 saved += 1
 
             await db.commit()

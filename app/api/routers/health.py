@@ -1,5 +1,5 @@
 from typing import Any
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.db.base import async_session_factory
 from app.rag.memory_manager import MemoryManager
@@ -8,33 +8,36 @@ from app.api.models import HealthResponse, StatsResponse
 
 router = APIRouter(tags=["Health"])
 
+
 async def _get_stats(session) -> dict[str, Any]:
     """Get system statistics from database."""
-    from sqlalchemy import select, func, and_
-    from app.db.models import User, Article, NewsletterRun
+    from sqlalchemy import case, func, select
+    from app.db.models import Article, NewsletterRun, ResearchSession, User
 
-    # Get article count
-    article_count = await session.scalar(select(func.count()).select_from(Article))
+    article_count = await session.scalar(select(func.count(Article.id))) or 0
+    user_count = await session.scalar(select(func.count(User.id))) or 0
+    active_sessions = await session.scalar(
+        select(func.count(ResearchSession.id)).where(ResearchSession.status == "running")
+    ) or 0
 
-    # Get user count
-    user_count = await session.scalar(select(func.count()).select_from(User))
-
-    # Get newsletter run stats
-    run_stats = await session.scalar(
-        select(
-            func.count(NewsletterRun.id).label("total"),
-            func.sum(
-                func.case((NewsletterRun.delivery_success == True, 1), else_=0)
-            ).label("successful"),
+    newsletter_row = (
+        await session.execute(
+            select(
+                func.count(NewsletterRun.id).label("total"),
+                func.coalesce(
+                    func.sum(case((NewsletterRun.delivery_success.is_(True), 1), else_=0)),
+                    0,
+                ).label("successful"),
+            )
         )
-    )
+    ).one()
 
     return {
-        "total_articles": article_count or 0,
-        "total_users": user_count or 0,
-        "total_newsletter_runs": run_stats.total if run_stats else 0,
-        "successful_deliveries": run_stats.successful if run_stats and run_stats.successful else 0,
-        "active_sessions": 0,  # Would need session table count
+        "total_articles": article_count,
+        "total_users": user_count,
+        "total_newsletter_runs": newsletter_row.total or 0,
+        "successful_deliveries": newsletter_row.successful or 0,
+        "active_sessions": active_sessions,
     }
 
 
@@ -46,41 +49,52 @@ async def health_check() -> HealthResponse:
         "status": "ok",
         "database": "unknown",
         "memory": "unknown",
-        "agents": {}
+        "agents": {},
     }
 
-    # Check database
     try:
         async with async_session_factory() as session:
             from sqlalchemy import text
+
             await session.execute(text("SELECT 1"))
         health["database"] = "healthy"
     except Exception as exc:
         health["database"] = f"error: {exc}"
 
-    # Check memory
     try:
         async with async_session_factory() as session:
             manager = MemoryManager(session)
             memory_health = await manager.health_check()
-            health["memory"] = "healthy" if memory_health.get("database") == "healthy" else "error"
-    except Exception:
-        health["memory"] = "not_initialized"
+            memory_ok = (
+                memory_health.get("database") == "healthy"
+                and memory_health.get("vector_store") == "healthy"
+            )
+            health["memory"] = "healthy" if memory_ok else "degraded"
+    except Exception as exc:
+        health["memory"] = f"error: {exc}"
 
-    # Check agents
     try:
         from app.agents.newsletter.agent import create_newsletter_agent
-        agent = create_newsletter_agent(settings)
+
+        create_newsletter_agent(settings)
         health["agents"]["newsletter"] = True
     except Exception:
         health["agents"]["newsletter"] = False
 
     try:
         from app.agents.deep_research.agent import create_deep_research_agent
-        agent = create_deep_research_agent(settings=settings)
+
+        create_deep_research_agent(settings=settings)
         health["agents"]["deep_research"] = True
     except Exception:
         health["agents"]["deep_research"] = False
+
+    if (
+        health["database"] != "healthy"
+        or health["memory"] != "healthy"
+        or not all(health["agents"].values())
+    ):
+        health["status"] = "degraded"
 
     return HealthResponse(**health)
 
@@ -88,14 +102,19 @@ async def health_check() -> HealthResponse:
 @router.get("/status")
 async def status() -> dict[str, Any]:
     """Get system status and statistics."""
-    async with async_session_factory() as session:
-        stats = await _get_stats(session)
-    return stats
+    try:
+        async with async_session_factory() as session:
+            return await _get_stats(session)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not load system status: {exc}") from exc
 
 
 @router.get("/stats", response_model=StatsResponse, tags=["Stats"])
 async def get_stats() -> StatsResponse:
     """Get system statistics."""
-    async with async_session_factory() as session:
-        stats = await _get_stats(session)
+    try:
+        async with async_session_factory() as session:
+            stats = await _get_stats(session)
         return StatsResponse(**stats)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not load stats: {exc}") from exc

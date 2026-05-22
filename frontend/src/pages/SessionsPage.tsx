@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { ApiService } from '../services/api';
-import type { ResearchSession, WatchProfile, ActiveSessionInfo, SessionLaunchPayload } from '../types';
+import type { EmailGroupSummary, ResearchSession, WatchProfile, ActiveSessionInfo, SessionLaunchPayload } from '../types';
 import { SessionCard } from '../components/SessionCard';
 import { NewSessionModal } from '../components/NewSessionModal';
 import {
   Plus, Search, LayoutGrid, List, ChevronDown, Command, AlertCircle,
   CalendarDays, Clock, Repeat, ToggleLeft, ToggleRight, Trash2,
-  Zap, FileSearch, MoreVertical, Eye, Play,
+  Zap, FileSearch, MoreVertical, Eye, Play, Mail,
 } from 'lucide-react';
 
 interface SessionsPageProps {
@@ -42,6 +42,7 @@ const phaseLabel: Record<string, string> = {
   dispatcher: 'Recherche…',
   dispatcher_parallel: 'Recherche parallèle…',
   synthesizer: 'Synthèse…',
+  emailer: 'Envoi email…',
   mailer: 'Envoi email…',
   completed: 'Terminé',
   done: 'Terminé',
@@ -54,11 +55,15 @@ const activeMenuItemStyle: React.CSSProperties = {
 
 const ScheduledProfileCard: React.FC<{
   profile: WatchProfile;
+  availableEmailGroups: EmailGroupSummary[];
   onToggle: (profile: WatchProfile) => Promise<void>;
   onRun: (profile: WatchProfile) => Promise<void>;
   onDelete: (profile: WatchProfile) => Promise<void>;
-}> = ({ profile, onToggle, onRun, onDelete }) => {
+  onSetEmailGroups: (profile: WatchProfile, groupIds: string[]) => Promise<void>;
+}> = ({ profile, availableEmailGroups, onToggle, onRun, onDelete, onSetEmailGroups }) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [emailPanelOpen, setEmailPanelOpen] = useState(false);
+  const [updatingGroups, setUpdatingGroups] = useState(false);
   const [busyAction, setBusyAction] = useState<'toggle' | 'run' | 'delete' | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -88,6 +93,19 @@ const ScheduledProfileCard: React.FC<{
     } finally {
       setBusyAction(null);
       setMenuOpen(false);
+    }
+  };
+
+
+  const toggleEmailGroup = async (groupId: string) => {
+    setUpdatingGroups(true);
+    const nextIds = profile.email_groups.some((group) => group.id === groupId)
+      ? profile.email_groups.filter((group) => group.id !== groupId).map((group) => group.id)
+      : [...profile.email_groups.map((group) => group.id), groupId];
+    try {
+      await onSetEmailGroups(profile, nextIds);
+    } finally {
+      setUpdatingGroups(false);
     }
   };
 
@@ -145,11 +163,28 @@ const ScheduledProfileCard: React.FC<{
         </div>
       </div>
 
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+        {profile.email_groups.length > 0 ? profile.email_groups.map((group) => (
+          <span key={group.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '999px', backgroundColor: 'rgba(59,130,246,0.10)', color: '#93c5fd', fontSize: '0.78rem' }}>
+            <Mail size={12} /> {group.name}
+          </span>
+        )) : (
+          <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Aucun groupe email</span>
+        )}
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '12px', gap: '12px' }}>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}>{profile.depth}</span>
           <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}>{profile.format}</span>
         </div>
+        <button
+          type="button"
+          onClick={() => setEmailPanelOpen((value) => !value)}
+          style={{ fontSize: '0.75rem', color: 'var(--accent-primary)', backgroundColor: 'transparent', border: 'none' }}
+        >
+          {emailPanelOpen ? 'Fermer les groupes' : 'Gérer les groupes'}
+        </button>
         {profile.last_run_at ? (
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
             <Clock size={11} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
@@ -159,6 +194,41 @@ const ScheduledProfileCard: React.FC<{
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Jamais exécutée</span>
         )}
       </div>
+
+      {emailPanelOpen && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '12px', borderTop: '1px dashed var(--border-color)' }}>
+          {availableEmailGroups.length === 0 ? (
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Aucun groupe disponible. Créez d'abord un groupe dans la page Email Groups.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {availableEmailGroups.map((group) => {
+                const active = profile.email_groups.some((item) => item.id === group.id);
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    disabled={updatingGroups}
+                    onClick={() => void toggleEmailGroup(group.id)}
+                    style={{
+                      padding: '7px 11px',
+                      borderRadius: '999px',
+                      border: active ? '1px solid rgba(124,140,255,0.35)' : '1px solid var(--border-color)',
+                      backgroundColor: active ? 'rgba(124,140,255,0.10)' : 'rgba(255,255,255,0.03)',
+                      color: active ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {group.name} · {group.recipient_count}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -243,6 +313,7 @@ const ActiveSessionCard: React.FC<{ info: ActiveSessionInfo; onClick: () => void
 export const SessionsPage: React.FC<SessionsPageProps> = ({ onSessionClick, onRunImmediate, onDeleteSession, onRerunSession, activeSessions }) => {
   const [sessions, setSessions] = useState<ResearchSession[]>([]);
   const [profiles, setProfiles] = useState<WatchProfile[]>([]);
+  const [emailGroups, setEmailGroups] = useState<EmailGroupSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -254,12 +325,14 @@ export const SessionsPage: React.FC<SessionsPageProps> = ({ onSessionClick, onRu
     setLoading(true);
     setError(null);
     try {
-      const [sessionData, profileData] = await Promise.all([
+      const [sessionData, profileData, emailGroupData] = await Promise.all([
         ApiService.getSessions(50),
         ApiService.getWatchProfiles(),
+        ApiService.getEmailGroups(true),
       ]);
       setSessions(sessionData.sessions);
       setProfiles(profileData);
+      setEmailGroups(emailGroupData);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -329,6 +402,14 @@ export const SessionsPage: React.FC<SessionsPageProps> = ({ onSessionClick, onRu
     try {
       await ApiService.runProfile(p.id);
       setProfiles(prev => prev.map(x => x.id === p.id ? { ...x, last_run_at: new Date().toISOString() } : x));
+    } catch {}
+  };
+
+
+  const handleSetProfileEmailGroups = async (profile: WatchProfile, groupIds: string[]) => {
+    try {
+      const updated = await ApiService.updateWatchProfile(profile.id, { email_group_ids: groupIds });
+      setProfiles((prev) => prev.map((item) => item.id === profile.id ? updated : item));
     } catch {}
   };
 
@@ -511,9 +592,11 @@ export const SessionsPage: React.FC<SessionsPageProps> = ({ onSessionClick, onRu
                   <ScheduledProfileCard
                     key={p.id}
                     profile={p}
+                    availableEmailGroups={emailGroups}
                     onToggle={handleToggleProfile}
                     onRun={handleRunProfile}
                     onDelete={async (profile) => handleDeleteProfile(profile.id)}
+                    onSetEmailGroups={handleSetProfileEmailGroups}
                   />
                 ))}
               </div>

@@ -28,10 +28,10 @@ _DEPTH_STEPS = {"brief": 2, "standard": 4, "deep": 7}
 
 # Which tools map to which source types
 _SOURCE_TOOLS = {
-    "web": ["searxng", "web_search"],
-    "arxiv": ["arxiv", "semantic_scholar"],
+    "web": ["free_search", "web_search", "searxng"],
+    "arxiv": ["research_search", "arxiv", "semantic_scholar", "openalex"],
     "reddit": ["reddit"],
-    "github": ["github"],
+    "github": ["research_search", "github"],
     "youtube": ["youtube"],
     "pdf": ["research_paper", "jina_reader"],
 }
@@ -89,7 +89,7 @@ class WatchContext:
         """Return the subset of tools the planner should use based on sources."""
         if not self.sources:
             # Default: web + arxiv
-            return ["searxng", "web_search", "arxiv", "semantic_scholar", "deep_research"]
+            return ["free_search", "web_search", "research_search", "searxng", "arxiv", "semantic_scholar", "openalex", "deep_research"]
         tools: list[str] = []
         for src in self.sources:
             tools.extend(_SOURCE_TOOLS.get(src, []))

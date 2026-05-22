@@ -69,6 +69,7 @@ async def stream_orchestrator(
     title: Optional[str] = Query(None, description="Optional explicit session title"),
     research_instructions: Optional[str] = Query(None, description="Optional long-form research instructions"),
     topics: Optional[list[str]] = Query(None, description="Optional topic list"),
+    send_email: bool = Query(False, description="Send the generated report by email"),
     autonomous: bool = Query(True, description="Run without human intervention"),
     session_id: Optional[str] = Query(None, description="Client-provided session UUID (generated if omitted)"),
 ):
@@ -89,6 +90,7 @@ async def stream_orchestrator(
             research_instructions=research_instructions,
             topics=topics,
             session_id=session_id,
+            send_email=send_email,
             autonomous=autonomous,
         ),
         media_type="text/event-stream",

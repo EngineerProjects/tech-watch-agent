@@ -14,6 +14,7 @@ Features:
 from typing import Any, Optional
 from datetime import datetime, timedelta
 
+from app.config.settings import Settings, get_settings
 from app.tools.base import BaseTool, ToolCategory, ToolResult
 from app.core.logging import get_logger
 
@@ -32,14 +33,15 @@ class GitHubTool(BaseTool):
         base_url: GitHub API base URL
     """
 
-    def __init__(self, api_token: Optional[str] = None) -> None:
+    def __init__(self, api_token: Optional[str] = None, settings: Optional[Settings] = None) -> None:
         """Initialize GitHub tool.
 
         Args:
             api_token: Optional GitHub API token for higher rate limits
         """
         super().__init__()
-        self._api_token = api_token
+        self._settings = settings or get_settings()
+        self._api_token = api_token or self._settings.github_api_token
         self._base_url = "https://api.github.com"
 
     @property

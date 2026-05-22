@@ -12,10 +12,10 @@ import {
   CheckCircle2,
   AlertCircle,
   PlayCircle,
-  Loader2
+  Loader2,
 } from 'lucide-react';
 import { ApiService } from '../services/api';
-import type { ResearchSession } from '../types';
+import type { ResearchSession, SystemStats, WatchProfile } from '../types';
 import { SessionStatus } from '../types';
 
 const StatCard = ({ icon: Icon, title, value, trend, color, sparklinePoints }: any) => (
@@ -64,6 +64,27 @@ const statusLabel: Record<string, string> = {
   created: 'PROGRAMMÉ',
   paused: 'PAUSÉ',
 };
+
+const EMPTY_STATS: SystemStats = {
+  total_articles: 0,
+  total_users: 0,
+  total_newsletter_runs: 0,
+  successful_deliveries: 0,
+  active_sessions: 0,
+};
+
+function buildTrackedTopics(profiles: WatchProfile[], sessions: ResearchSession[]): string[] {
+  const fromProfiles = profiles.flatMap(profile => profile.topics || []);
+  if (fromProfiles.length > 0) {
+    return Array.from(new Set(fromProfiles.map(topic => topic.trim()).filter(Boolean))).slice(0, 5);
+  }
+
+  const fromSessions = sessions.flatMap(session => {
+    const topics = session.meta_data?.topics;
+    return Array.isArray(topics) ? topics.filter((topic): topic is string => typeof topic === 'string') : [];
+  });
+  return Array.from(new Set(fromSessions.map(topic => topic.trim()).filter(Boolean))).slice(0, 5);
+}
 
 const RecentInvestigationRow = ({ session, onClick }: { session: ResearchSession; onClick: (id: string) => void }) => {
   const status = session.status;
@@ -135,26 +156,47 @@ const RecentInvestigationRow = ({ session, onClick }: { session: ResearchSession
 
 export const HomePage: React.FC<{ onNewAnalysis: () => void; onSessionClick: (id: string) => void }> = ({ onNewAnalysis, onSessionClick }) => {
   const [sessions, setSessions] = useState<ResearchSession[]>([]);
+  const [profiles, setProfiles] = useState<WatchProfile[]>([]);
+  const [stats, setStats] = useState<SystemStats | null>(null);
   const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    ApiService.getSessions(5)
-      .then(data => {
-        setSessions(data.sessions);
-        setTotal(data.total);
+    let cancelled = false;
+
+    Promise.all([
+      ApiService.getSessions(8),
+      ApiService.getWatchProfiles().catch(() => []),
+      ApiService.getSystemStats().catch(() => EMPTY_STATS),
+    ])
+      .then(([sessionData, profileData, statsData]) => {
+        if (cancelled) return;
+        setSessions(sessionData.sessions);
+        setTotal(sessionData.total);
+        setProfiles(profileData);
+        setStats(statsData);
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const completedCount = sessions.filter(s => s.status === SessionStatus.COMPLETED).length;
-  const runningCount = sessions.filter(s => s.status === SessionStatus.RUNNING).length;
+  const runningCount = sessions.filter(session => session.status === SessionStatus.RUNNING).length;
+  const trackedTopics = buildTrackedTopics(profiles, sessions);
+  const activeProfileCount = profiles.filter(profile => profile.is_active).length;
+  const activeSessions = stats?.active_sessions ?? runningCount;
+  const totalArticles = stats?.total_articles ?? 0;
+  const deliveredNewsletters = stats?.successful_deliveries ?? 0;
+  const newsletterRuns = stats?.total_newsletter_runs ?? 0;
 
   return (
     <div className="page-container" style={{ display: 'flex', flexDirection: 'column', gap: '40px' }}>
 
-      {/* Header */}
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <h1 style={{ fontSize: '2.2rem', fontWeight: 800, marginBottom: '8px' }}>Tableau de bord</h1>
@@ -179,7 +221,6 @@ export const HomePage: React.FC<{ onNewAnalysis: () => void; onSessionClick: (id
         </button>
       </header>
 
-      {/* Search Section */}
       <section style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ position: 'relative', width: '100%' }}>
           <Search size={20} style={{ position: 'absolute', left: '20px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
@@ -199,57 +240,58 @@ export const HomePage: React.FC<{ onNewAnalysis: () => void; onSessionClick: (id
             }}
           />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Sujets populaires</span>
-          {['LLM Open Source', 'Agents IA', 'Diffusion Models', 'Startups IA', 'Papers Récents'].map(topic => (
-            <button key={topic} style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Topics suivis</span>
+          {trackedTopics.length > 0 ? trackedTopics.map(topic => (
+            <span key={topic} style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
               {topic}
-            </button>
-          ))}
+            </span>
+          )) : (
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Ajoutez un profil de veille pour faire remonter vos thèmes ici.</span>
+          )}
         </div>
       </section>
 
-      {/* Stats Grid */}
       <section style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
         <StatCard
           icon={Zap}
-          title="Sessions lancées"
+          title="Investigations"
           value={loading ? '...' : String(total)}
-          trend={runningCount > 0 ? `${runningCount} en cours` : undefined}
+          trend={total > 0 ? `${sessions.length} récente${sessions.length > 1 ? 's' : ''}` : undefined}
           color="var(--accent-purple)"
           sparklinePoints="M 0 30 Q 25 10 50 25 T 100 15 T 150 20 T 200 5"
         />
         <StatCard
-          icon={Database}
-          title="Complétées"
-          value={loading ? '...' : String(completedCount)}
+          icon={Clock}
+          title="Sessions actives"
+          value={loading ? '...' : String(activeSessions)}
+          trend={activeProfileCount > 0 ? `${activeProfileCount} profil${activeProfileCount > 1 ? 's' : ''} actif${activeProfileCount > 1 ? 's' : ''}` : undefined}
           color="var(--accent-secondary)"
           sparklinePoints="M 0 35 Q 20 20 40 30 T 80 15 T 120 25 T 160 10 T 200 20"
         />
         <StatCard
-          icon={Send}
-          title="En cours"
-          value={loading ? '...' : String(runningCount)}
+          icon={Database}
+          title="Articles collectés"
+          value={loading ? '...' : String(totalArticles)}
           color="var(--accent-primary)"
           sparklinePoints="M 0 25 Q 30 35 60 15 T 120 20 T 180 5 T 200 10"
         />
         <StatCard
-          icon={Clock}
-          title="Temps économisé"
-          value={loading ? '...' : `${total * 30}min`}
-          trend="Estimation"
+          icon={Send}
+          title="Emails livrés"
+          value={loading ? '...' : String(deliveredNewsletters)}
+          trend={newsletterRuns > 0 ? `${newsletterRuns} exécution${newsletterRuns > 1 ? 's' : ''}` : undefined}
           color="var(--accent-primary)"
           sparklinePoints="M 0 35 Q 50 30 100 15 T 150 25 T 200 5"
         />
       </section>
 
-      {/* Recent Investigations */}
       <section style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Investigations récentes</h2>
-          <button style={{ color: 'var(--accent-primary)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
-            Voir toutes les sessions <ChevronRight size={16} />
-          </button>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}>
+            {total} au total <ChevronRight size={16} />
+          </div>
         </div>
 
         {loading ? (
@@ -259,8 +301,8 @@ export const HomePage: React.FC<{ onNewAnalysis: () => void; onSessionClick: (id
           </div>
         ) : sessions.length > 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {sessions.map(s => (
-              <RecentInvestigationRow key={s.id} session={s} onClick={onSessionClick} />
+            {sessions.map(session => (
+              <RecentInvestigationRow key={session.id} session={session} onClick={onSessionClick} />
             ))}
           </div>
         ) : (

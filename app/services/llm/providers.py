@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import httpx
 from dataclasses import dataclass, field
-from typing import Optional, Callable
+from typing import Optional
 from enum import Enum
 
 from app.core.logging import get_logger
@@ -74,21 +74,21 @@ def _init_providers() -> None:
     _register_provider(LLMProviderConfig(
         name=LLMProviders.OLLAMA,
         base_url="http://localhost:11434/v1",
-        default_model="llama3.2",
+        default_model="",
         auth_type=AuthType.NONE,
         requires_api_key=False,
     ))
     _register_provider(LLMProviderConfig(
         name=LLMProviders.ZAI,
         base_url="https://api.z.ai/api/paas/v4",
-        default_model="glm-4.7-flash",
+        default_model="glm-4.7",
         auth_type=AuthType.BEARER,
         requires_api_key=True,
     ))
     _register_provider(LLMProviderConfig(
         name=LLMProviders.OPENAI,
         base_url="https://api.openai.com/v1",
-        default_model="gpt-4o-mini",
+        default_model="gpt-4.1-mini",
         auth_type=AuthType.BEARER,
         requires_api_key=True,
     ))
@@ -128,21 +128,20 @@ def register_provider(
     ))
 
 
+def _models_url(base_url: str) -> str:
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/models"
+    return f"{base}/models"
+
+
 async def check_provider_health(
     name: str,
     api_key: str = "",
     timeout: float = 10.0,
+    base_url: str | None = None,
 ) -> bool:
-    """Check if a provider endpoint is reachable.
-
-    Args:
-        name: Provider name
-        api_key: API key for the provider
-        timeout: Request timeout in seconds
-
-    Returns:
-        True if the provider responds to a models list request
-    """
+    """Check if a provider endpoint is reachable."""
     config = get_provider_config(name)
     if config is None:
         logger.warning("Unknown provider: %s", name)
@@ -153,7 +152,7 @@ async def check_provider_health(
         return False
 
     headers = config.build_headers(api_key)
-    url = f"{config.base_url.rstrip('/')}/models"
+    url = _models_url(base_url or config.base_url)
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -168,6 +167,7 @@ def check_provider_health_sync(
     name: str,
     api_key: str = "",
     timeout: float = 10.0,
+    base_url: str | None = None,
 ) -> bool:
     """Sync version of provider health check."""
     config = get_provider_config(name)
@@ -178,7 +178,7 @@ def check_provider_health_sync(
         return False
 
     headers = config.build_headers(api_key)
-    url = f"{config.base_url.rstrip('/')}/models"
+    url = _models_url(base_url or config.base_url)
 
     try:
         with httpx.Client(timeout=timeout) as client:

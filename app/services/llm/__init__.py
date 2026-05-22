@@ -37,8 +37,14 @@ class ChatCompletionClient:
         if self._provider_config is None:
             raise ValueError(f"Unknown LLM provider: {self._provider_name}")
 
-        self.base_url = self._provider_config.base_url
+        self.base_url = self.settings.llm_base_url or self._provider_config.base_url
         self.default_model = self.settings.llm_model or self._provider_config.default_model
+        if not self.default_model and self._provider_name == LLMProviders.OLLAMA:
+            from app.services.llm.model_catalog import discover_ollama_catalog
+
+            discovered = discover_ollama_catalog(self.base_url)
+            chat_models = discovered.get("chat_models", []) or []
+            self.default_model = chat_models[0].id if chat_models else ""
         self.default_temperature = self.settings.llm_temperature
         self.default_max_tokens = self.settings.llm_max_tokens
         
@@ -85,7 +91,10 @@ class ChatCompletionClient:
         import asyncio
 
         # Build the ordered list of models to try: primary → fallbacks
-        models_to_try = [model or self.default_model] + self._fallback_models
+        models_to_try = [candidate for candidate in [model or self.default_model, *self._fallback_models] if candidate]
+        if not models_to_try:
+            logger.error("No model configured or detected for provider: %s", self._provider_name)
+            return None if response_model else ""
 
         for model_candidate in models_to_try:
             for attempt in range(max_retries):
@@ -147,8 +156,12 @@ class ChatCompletionClient:
         extra_headers: dict[str, str] | None = None,
         response_model: type[BaseModel] | None = None,
     ) -> Any:
+        resolved_model = model or self.default_model
+        if not resolved_model:
+            raise ValueError(f"No model configured or detected for provider: {self._provider_name}")
+
         payload = {
-            "model": model or self.default_model,
+            "model": resolved_model,
             "messages": self._build_messages(prompt, system_message),
             "temperature": temperature
             if temperature is not None
@@ -223,6 +236,10 @@ class ChatCompletionClient:
     ) -> str:
         import time
 
+        if not (model or self.default_model):
+            logger.error("No model configured or detected for provider: %s", self._provider_name)
+            return ""
+
         last_error = None
         for attempt in range(max_retries):
             try:
@@ -273,8 +290,12 @@ class ChatCompletionClient:
         max_tokens: int | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> str:
+        resolved_model = model or self.default_model
+        if not resolved_model:
+            raise ValueError(f"No model configured or detected for provider: {self._provider_name}")
+
         payload = {
-            "model": model or self.default_model,
+            "model": resolved_model,
             "messages": self._build_messages(prompt, system_message),
             "temperature": temperature
             if temperature is not None
@@ -331,8 +352,12 @@ class ChatCompletionClient:
         Yields:
             Chunks of the generated content as they arrive
         """
+        resolved_model = model or self.default_model
+        if not resolved_model:
+            raise ValueError(f"No model configured or detected for provider: {self._provider_name}")
+
         payload = {
-            "model": model or self.default_model,
+            "model": resolved_model,
             "messages": self._build_messages(prompt, system_message),
             "temperature": temperature if temperature is not None else self.default_temperature,
             "max_tokens": max_tokens if max_tokens is not None else self.default_max_tokens,

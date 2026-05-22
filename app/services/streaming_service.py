@@ -42,34 +42,31 @@ async def _finalize_session(
     final_report: Optional[str] = None,
     error: Optional[str] = None,
 ) -> None:
-    """Unconditionally mark a session as completed or failed in the DB.
+    """Persist a terminal session state through SessionManager.
 
-    Called by the streaming service at the very end of every run so the
-    status is always accurate, even when the synthesizer node crashes.
+    The stream still acts as the last safety net, but persistence now goes
+    through the shared session manager path instead of custom DB writes.
     """
+    manager = None
     try:
-        from sqlalchemy import select
-        from app.db.base import get_db_context
-        from app.db.models import ResearchSession as _RS
+        from app.services.session_manager import SessionManager
 
-        async with get_db_context() as db:
-            result = await db.execute(select(_RS).where(_RS.id == session_uuid))
-            session = result.scalar_one_or_none()
-            if session is None:
-                return
-            session.status = status
-            session.phase = status  # "completed" or "failed"
-            session.updated_at = datetime.now()
-            if status == "completed":
-                session.completed_at = datetime.now()
-                if final_report:
-                    session.final_report = final_report
-            if error:
-                session.meta_data = {**(session.meta_data or {}), "last_error": str(error)[:500]}
-            await db.commit()
-            logger.info("Session %s finalized as %s", session_uuid, status)
+        manager = SessionManager(session_uuid)
+        await manager.initialize()
+        if manager.session is None:
+            return
+
+        await manager.finalize_session(
+            status=status,
+            final_report=final_report,
+            error=error,
+        )
+        logger.info("Session %s finalized as %s", session_uuid, status)
     except Exception as exc:
         logger.warning("Could not finalize session %s: %s", session_uuid, exc)
+    finally:
+        if manager is not None:
+            await manager.close()
 
 
 async def cleanup_stale_running_sessions(max_age_hours: int = 3) -> int:
@@ -122,6 +119,7 @@ class StreamingOrchestratorService:
         task: str,
         topics: Optional[list[str]] = None,
         session_id: Optional[str] = None,
+        send_email: bool = False,
         autonomous: bool = True,
         subject: Optional[str] = None,
         title: Optional[str] = None,
@@ -177,7 +175,7 @@ class StreamingOrchestratorService:
             "research_brief": task,
             "task_id": f"orch_{session_uuid}",
             "topics": topics or [],
-            "send_email": True,
+            "send_email": send_email,
             "metadata": {"topics": topics or [], "subject": subject, "research_instructions": research_instructions, "title": derive_session_title(title=title, subject=subject, task=task)},
             "plan": [],
             "current_step_index": 0,
@@ -271,13 +269,6 @@ class StreamingOrchestratorService:
                         elif name == "synthesizer":
                             report = output.get("final_report", "")
                             if report:
-                                chunk_size = 400
-                                for i in range(0, len(report), chunk_size):
-                                    await queue.put(self._format_sse("report_chunk", {
-                                        "chunk": report[i:i + chunk_size],
-                                        "timestamp": datetime.now().isoformat()
-                                    }))
-                                    await asyncio.sleep(0.01)
                                 await queue.put(self._format_sse("report_completed", {
                                     "report_length": len(report),
                                     "timestamp": datetime.now().isoformat()

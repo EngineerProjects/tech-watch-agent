@@ -1,25 +1,127 @@
-import type { ResearchSession, WatchProfile, NewsletterRun, Article, CollectedSource, SessionLaunchPayload } from '../types';
+import type {
+  ResearchSession,
+  WatchProfile,
+  WatchProfileRunResponse,
+  EmailGroup,
+  NewsletterRun,
+  Article,
+  CollectedSource,
+  SessionLaunchPayload,
+  SystemStats,
+} from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const ADMIN_TOKEN_KEY = 'tech-watch-admin-token';
+const ADMIN_COOKIE_NAME = 'admin_token';
+const ADMIN_TOKEN_EVENT = 'admin-token-changed';
+
+export type ModelCatalogItem = {
+  id: string;
+  label: string;
+  description?: string | null;
+  context_window?: number | null;
+  max_output_tokens?: number | null;
+  dimensions?: number | null;
+  capabilities: string[];
+  recommended_role?: string | null;
+  source: string;
+  available?: boolean | null;
+  family?: string | null;
+  parameter_size?: string | null;
+  quantization?: string | null;
+  size_bytes?: number | null;
+};
+
+export type LLMProviderCatalog = {
+  name: string;
+  label?: string | null;
+  base_url: string;
+  default_model: string;
+  requires_api_key: boolean;
+  supports_dynamic_discovery?: boolean;
+  discovery_error?: string | null;
+  chat_models: ModelCatalogItem[];
+  embedding_models: ModelCatalogItem[];
+};
+
+export type LLMProviderListResponse = {
+  providers: LLMProviderCatalog[];
+  current_provider: string;
+  current_model: string;
+  current_embedding_provider?: string | null;
+  current_embedding_model?: string | null;
+};
 
 export class ApiService {
+  private static readAdminToken(): string {
+    if (typeof window === 'undefined') return '';
+    return window.localStorage.getItem(ADMIN_TOKEN_KEY)?.trim() ?? '';
+  }
+
+  private static writeAdminCookie(token: string): void {
+    if (typeof document === 'undefined') return;
+    if (!token) {
+      document.cookie = `${ADMIN_COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax`;
+      return;
+    }
+    document.cookie = `${ADMIN_COOKIE_NAME}=${encodeURIComponent(token)}; path=/; max-age=2592000; SameSite=Lax`;
+  }
+
+  static getAdminToken(): string {
+    return this.readAdminToken();
+  }
+
+  static hasAdminToken(): boolean {
+    return Boolean(this.readAdminToken());
+  }
+
+  static setAdminToken(token: string): void {
+    if (typeof window === 'undefined') return;
+    const trimmed = token.trim();
+    if (!trimmed) {
+      this.clearAdminToken();
+      return;
+    }
+    window.localStorage.setItem(ADMIN_TOKEN_KEY, trimmed);
+    this.writeAdminCookie(trimmed);
+    window.dispatchEvent(new CustomEvent(ADMIN_TOKEN_EVENT));
+  }
+
+  static clearAdminToken(): void {
+    if (typeof window === 'undefined') return;
+    window.localStorage.removeItem(ADMIN_TOKEN_KEY);
+    this.writeAdminCookie('');
+    window.dispatchEvent(new CustomEvent(ADMIN_TOKEN_EVENT));
+  }
+
+  static onAdminTokenChange(callback: () => void): () => void {
+    if (typeof window === 'undefined') return () => {};
+    window.addEventListener(ADMIN_TOKEN_EVENT, callback);
+    return () => window.removeEventListener(ADMIN_TOKEN_EVENT, callback);
+  }
+
   private static async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
+    const adminToken = this.readAdminToken();
     const headers = {
       'Content-Type': 'application/json',
+      ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
       ...options.headers,
     };
 
     let response: Response;
     try {
-      response = await fetch(url, { ...options, headers });
+      response = await fetch(url, { ...options, headers, credentials: 'include' });
     } catch {
       throw new Error(`Connexion impossible au serveur (${API_BASE_URL}). Vérifiez que le backend est démarré.`);
     }
 
     if (!response.ok) {
       const error = await response.json().catch(() => null);
-      const msg = error?.detail || error?.message || `Erreur ${response.status} — ${response.statusText}`;
+      let msg = error?.detail || error?.message || `Erreur ${response.status} — ${response.statusText}`;
+      if (response.status === 401 && !adminToken) {
+        msg = 'Authentification admin requise. Configurez un token admin dans Paramètres > Sécurité.';
+      }
       throw new Error(msg);
     }
 
@@ -53,7 +155,7 @@ export class ApiService {
     return this.request(`/watch-profiles/?active_only=${activeOnly}`);
   }
 
-  static async updateWatchProfile(id: string, data: Partial<WatchProfile>): Promise<WatchProfile> {
+  static async updateWatchProfile(id: string, data: Partial<WatchProfile> & { email_group_ids?: string[] }): Promise<WatchProfile> {
     return this.request(`/watch-profiles/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -73,26 +175,67 @@ export class ApiService {
     depth?: string;
     format?: string;
     angle?: string;
+    sources?: string[];
     language?: string;
+    audience?: string;
     focus?: string;
     schedule_type?: string;
     schedule_time?: string;
     schedule_days?: string[];
     schedule_date?: string;
     schedule_interval_months?: number;
+    email_group_ids?: string[];
     is_active?: boolean;
-  }): Promise<{ id: string; name: string }> {
+  }): Promise<WatchProfile> {
     return this.request('/watch-profiles/', {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
-  static async runProfile(id: string, options: { send_email?: boolean } = {}): Promise<{ session_id: string }> {
+  static async runProfile(id: string, options: { send_email?: boolean } = {}): Promise<WatchProfileRunResponse> {
     return this.request(`/watch-profiles/${id}/run`, {
       method: 'POST',
       body: JSON.stringify(options),
     });
+  }
+
+  static async getEmailGroups(activeOnly = false): Promise<EmailGroup[]> {
+    return this.request(`/email-groups/?active_only=${activeOnly}`);
+  }
+
+  static async createEmailGroup(data: {
+    name: string;
+    description?: string;
+    is_active?: boolean;
+    recipients: Array<{ email: string; label?: string | null }>;
+  }): Promise<EmailGroup> {
+    return this.request('/email-groups/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static async updateEmailGroup(id: string, data: {
+    name?: string;
+    description?: string | null;
+    is_active?: boolean;
+    recipients?: Array<{ email: string; label?: string | null }>;
+  }): Promise<EmailGroup> {
+    return this.request(`/email-groups/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  static async deleteEmailGroup(id: string): Promise<void> {
+    await this.request(`/email-groups/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  static async getSystemStats(): Promise<SystemStats> {
+    return this.request('/stats');
   }
 
   static async getNewsletterHistory(limit = 10): Promise<NewsletterRun[]> {
@@ -141,16 +284,26 @@ export class ApiService {
     });
   }
 
-  static async getLLMProviders(): Promise<{
-    providers: Array<{ name: string; base_url: string; default_model: string; requires_api_key: boolean }>;
-    current_provider: string;
-    current_model: string;
-  }> {
+  static async resetConfig(keys?: string[]): Promise<{ status: string; reset: string[] | string }> {
+    return this.request('/config/reset', {
+      method: 'POST',
+      body: JSON.stringify(keys?.length ? { keys } : {}),
+    });
+  }
+
+  static async getLLMProviders(): Promise<LLMProviderListResponse> {
     return this.request('/llm/providers');
   }
 
   static async checkProviderHealth(provider: string): Promise<{ provider: string; healthy: boolean; latency_ms: number }> {
     return this.request(`/llm/providers/${provider}/health`);
+  }
+
+  static async pullOllamaModel(model: string): Promise<{ status: string; provider: string; model: string; message: string }> {
+    return this.request('/llm/ollama/pull', {
+      method: 'POST',
+      body: JSON.stringify({ model }),
+    });
   }
 
   static async testSearchProvider(provider: string, query: string): Promise<{ ok: boolean; provider: string; results: any[]; error?: string }> {

@@ -20,6 +20,7 @@ logs/
 
 # Secrets & credentials
 .env
+.env.personal
 credentials.json
 token.json
 

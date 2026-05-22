@@ -1635,9 +1635,8 @@ Rules:
             if self._session_manager is None:
                 raise ValueError("Session manager unavailable for final persistence")
 
-            await self._session_manager.update_session(
+            await self._session_manager.finalize_session(
                 status="completed",
-                phase=SessionPhase.COMPLETED,
                 plan=state.get("plan", []),
                 current_step_index=state.get("current_step_index", 0),
                 research_results=research_results,
@@ -1672,6 +1671,7 @@ Rules:
                 report=report,
                 subject=subject,
                 send=bool(state.get("send_email", True)),
+                recipients=state.get("email_recipients"),
             )
 
             state["email_sent"] = result.sent

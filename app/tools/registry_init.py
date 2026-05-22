@@ -45,7 +45,7 @@ def initialize_tools() -> None:
     except (ImportError, ValueError) as e:
         logger.debug(f"Tavily not available: {e}")
 
-    # web_search — multi-provider tool (SearXNG + Tavily + Exa in parallel, deduped)
+    # web_search — API-backed providers only (Tavily / Exa / LangSearch)
     try:
         from app.tools.web.multi_search import MultiProviderSearchTool
         register_tool(MultiProviderSearchTool())
@@ -53,6 +53,24 @@ def initialize_tools() -> None:
         logger.info("Registered MultiProviderSearch tool as 'web_search'")
     except (ImportError, ValueError) as e:
         logger.warning(f"MultiProviderSearch not available: {e}")
+
+    # free_search — SearXNG-first, quota-light discovery path
+    try:
+        from app.tools.web.free_search import FreeSearchTool
+        register_tool(FreeSearchTool())
+        tools_registered += 1
+        logger.info("Registered FreeSearch tool")
+    except (ImportError, ValueError) as e:
+        logger.warning(f"FreeSearch not available: {e}")
+
+    # research_search — academic/code focused search, SearXNG first then fan-out
+    try:
+        from app.tools.web.research_search import ResearchSearchTool
+        register_tool(ResearchSearchTool())
+        tools_registered += 1
+        logger.info("Registered ResearchSearch tool")
+    except (ImportError, ValueError) as e:
+        logger.warning(f"ResearchSearch not available: {e}")
     
     try:
         from app.tools.web.semantic_scholar import SemanticScholarTool

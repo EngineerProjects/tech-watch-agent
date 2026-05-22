@@ -7,19 +7,38 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.security import require_admin_access
+from app.config.settings import get_settings
 from app.core.logging import get_logger
 from app.core.research_brief import build_research_brief
+from app.core.watch_context import WatchContext
 from app.db.base import async_session_factory
-from app.db.models import WatchProfile
-from app.db.repositories import WatchProfileRepository
+from app.db.models import EmailGroup, WatchProfile
+from app.db.repositories import EmailGroupRepository, WatchProfileRepository
+from app.scheduler.service import OrchestratorScheduler
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/watch-profiles", tags=["Watch Profiles"])
+router = APIRouter(prefix="/watch-profiles", tags=["Watch Profiles"], dependencies=[Depends(require_admin_access)])
 
 
-# ── Pydantic schemas ─────────────────────────────────────────────────────────
+class EmailGroupSummary(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    is_active: bool
+    recipient_count: int
+
+    @classmethod
+    def from_model(cls, group: EmailGroup) -> "EmailGroupSummary":
+        return cls(
+            id=str(group.id),
+            name=group.name,
+            description=group.description,
+            is_active=group.is_active,
+            recipient_count=len(group.recipients or []),
+        )
+
 
 class WatchProfileCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
@@ -34,9 +53,10 @@ class WatchProfileCreate(BaseModel):
     focus: Optional[str] = None
     schedule_time: Optional[str] = None
     schedule_days: list[str] = Field(default_factory=list)
-    schedule_type: Optional[str] = Field(None)   # weekly|once|monthly|custom
-    schedule_date: Optional[str] = None           # "2025-06-15"
+    schedule_type: Optional[str] = Field(None)
+    schedule_date: Optional[str] = None
     schedule_interval_months: Optional[int] = Field(None, ge=1, le=60)
+    email_group_ids: list[str] = Field(default_factory=list)
     is_active: bool = True
 
 
@@ -56,6 +76,7 @@ class WatchProfileUpdate(BaseModel):
     schedule_type: Optional[str] = None
     schedule_date: Optional[str] = None
     schedule_interval_months: Optional[int] = Field(None, ge=1, le=60)
+    email_group_ids: Optional[list[str]] = None
     is_active: Optional[bool] = None
 
 
@@ -78,6 +99,7 @@ class WatchProfileResponse(BaseModel):
     schedule_interval_months: Optional[int]
     is_active: bool
     last_run_at: Optional[str]
+    email_groups: list[EmailGroupSummary]
     created_at: str
     updated_at: str
 
@@ -102,17 +124,31 @@ class WatchProfileResponse(BaseModel):
             schedule_interval_months=p.schedule_interval_months,
             is_active=p.is_active,
             last_run_at=p.last_run_at.isoformat() if p.last_run_at else None,
+            email_groups=[EmailGroupSummary.from_model(group) for group in (p.email_groups or [])],
             created_at=p.created_at.isoformat() if p.created_at else "",
             updated_at=p.updated_at.isoformat() if p.updated_at else "",
         )
 
 
 class RunProfileRequest(BaseModel):
-    send_email: bool = False
+    send_email: Optional[bool] = None
     task_override: Optional[str] = None
 
 
-# ── Endpoints ────────────────────────────────────────────────────────────────
+def _parse_email_group_ids(raw_ids: list[str]) -> list[uuid.UUID]:
+    group_ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    for raw_id in raw_ids:
+        try:
+            parsed = uuid.UUID(raw_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid email group id: {raw_id}") from exc
+        if parsed in seen:
+            continue
+        seen.add(parsed)
+        group_ids.append(parsed)
+    return group_ids
+
 
 @router.get("/", response_model=list[WatchProfileResponse])
 async def list_profiles(active_only: bool = False) -> list[WatchProfileResponse]:
@@ -126,13 +162,16 @@ async def list_profiles(active_only: bool = False) -> list[WatchProfileResponse]
 async def create_profile(body: WatchProfileCreate) -> WatchProfileResponse:
     async with async_session_factory() as db:
         repo = WatchProfileRepository(db)
-        profile = WatchProfile(
-            id=uuid.uuid4(),
-            **body.model_dump(),
-        )
+        payload = body.model_dump(exclude={"email_group_ids"})
+        profile = WatchProfile(id=uuid.uuid4(), **payload)
         created = await repo.create(profile)
+        try:
+            await repo.set_email_groups(created, _parse_email_group_ids(body.email_group_ids))
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         await db.commit()
-        return WatchProfileResponse.from_model(created)
+        refreshed = await repo.get_by_id(created.id)
+        return WatchProfileResponse.from_model(refreshed or created)
 
 
 @router.get("/{profile_id}", response_model=WatchProfileResponse)
@@ -152,8 +191,17 @@ async def update_profile(profile_id: str, body: WatchProfileUpdate) -> WatchProf
         profile = await repo.get_by_id(uuid.UUID(profile_id))
         if not profile:
             raise HTTPException(status_code=404, detail="Profile not found")
-        for field, value in body.model_dump(exclude_none=True).items():
+
+        updates = body.model_dump(exclude_none=True, exclude={"email_group_ids"})
+        for field, value in updates.items():
             setattr(profile, field, value)
+
+        if body.email_group_ids is not None:
+            try:
+                await repo.set_email_groups(profile, _parse_email_group_ids(body.email_group_ids))
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
         updated = await repo.update(profile)
         await db.commit()
         return WatchProfileResponse.from_model(updated)
@@ -174,16 +222,14 @@ async def run_profile(profile_id: str, body: RunProfileRequest) -> dict[str, Any
     """Launch the orchestrator with this profile's configuration."""
     async with async_session_factory() as db:
         repo = WatchProfileRepository(db)
+        group_repo = EmailGroupRepository(db)
         profile = await repo.get_by_id(uuid.UUID(profile_id))
         if not profile:
             raise HTTPException(status_code=404, detail="Profile not found")
 
+        recipients = await group_repo.resolve_recipients_for_profile(profile)
         await repo.touch_last_run(uuid.UUID(profile_id))
         await db.commit()
-
-    from app.core.watch_context import WatchContext
-    from app.scheduler.service import OrchestratorScheduler
-    from app.config.settings import get_settings
 
     ctx = WatchContext.from_profile(profile)
     task = body.task_override or build_research_brief(
@@ -191,17 +237,27 @@ async def run_profile(profile_id: str, body: RunProfileRequest) -> dict[str, Any
         ctx.topics or None,
         profile.focus,
     )
+    send_email = body.send_email if body.send_email is not None else bool(recipients)
 
     try:
         scheduler = OrchestratorScheduler(mode="v2", settings=get_settings())
         result = await scheduler.run_task(
             task=task,
             topics=ctx.topics or None,
-            send_email=body.send_email,
+            send_email=send_email,
             autonomous=True,
             watch_context=ctx,
+            recipients_override=recipients or None,
         )
-        return {"success": True, "profile": profile.name, "task": task, "result": result}
+        return {
+            "success": bool(result.get("success", True)),
+            "session_id": result.get("session_id"),
+            "profile": profile.name,
+            "task": task,
+            "report": result.get("report"),
+            "email_sent": result.get("email_sent", False),
+            "result": result,
+        }
     except Exception as exc:
         logger.error("Profile run failed: %s", exc)
-        return {"success": False, "profile": profile.name, "error": str(exc)}
+        return {"success": False, "session_id": None, "profile": profile.name, "error": str(exc)}

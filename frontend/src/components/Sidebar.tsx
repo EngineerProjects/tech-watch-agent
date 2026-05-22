@@ -1,5 +1,6 @@
-import React from 'react';
-import { LayoutDashboard, Compass, Mail, Settings, Zap, History, Search, Command } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { LayoutDashboard, Mail, Settings, Zap, History, Search, Command, Shield, Users } from 'lucide-react';
+import { ApiService } from '../services/api';
 
 interface SidebarProps {
   currentPage: string;
@@ -11,11 +12,28 @@ const navItems = [
   { id: 'sessions',  label: 'Sessions',    icon: History },
   { id: 'newsletter',label: 'Newsletter',  icon: Mail },
   { id: 'sources',   label: 'Sources',     icon: Search },
-  { id: 'topics',    label: 'Topics',      icon: Compass },
+  { id: 'email-groups', label: 'Email Groups', icon: Users },
   { id: 'settings',  label: 'Paramètres',  icon: Settings },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onPageChange }) => {
+  const [hasAdminToken, setHasAdminToken] = useState(ApiService.hasAdminToken());
+
+  useEffect(() => ApiService.onAdminTokenChange(() => setHasAdminToken(ApiService.hasAdminToken())), []);
+
+  const handleAdminToken = () => {
+    const current = ApiService.getAdminToken();
+    const next = window.prompt('Collez votre token admin. Laisser vide pour le supprimer.', current);
+    if (next === null) return;
+    if (!next.trim()) {
+      ApiService.clearAdminToken();
+      setHasAdminToken(false);
+      return;
+    }
+    ApiService.setAdminToken(next);
+    setHasAdminToken(true);
+  };
+
   return (
     <aside
       className="main-sidebar"
@@ -35,7 +53,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onPageChange }) =
         transition: 'width 0.2s ease',
       }}
     >
-      {/* Logo */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '40px', padding: '0 var(--sidebar-px, 24px)', minWidth: 0 }}>
         <div style={{
           width: '28px', height: '28px', flexShrink: 0,
@@ -51,7 +68,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onPageChange }) =
         </span>
       </div>
 
-      {/* Nav */}
       <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '0 8px', flex: 1 }}>
         {navItems.map(item => {
           const Icon = item.icon;
@@ -86,7 +102,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onPageChange }) =
         })}
       </nav>
 
-      {/* Bottom */}
       <div className="sidebar-bottom-section" style={{ padding: '0 12px' }}>
         <div style={{ padding: '0 12px', marginBottom: '20px' }}>
           <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '10px' }}>
@@ -105,16 +120,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onPageChange }) =
           borderRadius: '10px',
           backgroundColor: 'rgba(255,255,255,0.02)',
           border: '1px solid var(--border-color)',
-          display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer'
+          display: 'flex', flexDirection: 'column', gap: '10px'
         }}>
-          <img
-            src="https://api.dicebear.com/7.x/avataaars/svg?seed=Alexandre"
-            alt="Alexandre"
-            style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: 'var(--bg-surface)', flexShrink: 0 }}
-          />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Alexandre</div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Admin</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '28px', height: '28px', borderRadius: '8px', backgroundColor: hasAdminToken ? 'rgba(34,197,94,0.12)' : 'rgba(124,140,255,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: hasAdminToken ? '#22c55e' : 'var(--accent-primary)', flexShrink: 0 }}>
+              <Shield size={15} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Accès admin</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{hasAdminToken ? 'Token chargé' : 'Token requis en production'}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={handleAdminToken} style={{ flex: 1, padding: '7px 10px', borderRadius: '8px', backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.78rem', fontWeight: 600 }}>
+              {hasAdminToken ? 'Mettre à jour' : 'Configurer'}
+            </button>
+            <a href="/ui" target="_blank" rel="noreferrer" style={{ flex: 1, padding: '7px 10px', borderRadius: '8px', backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.78rem', fontWeight: 600, textAlign: 'center', textDecoration: 'none' }}>
+              Ouvrir /ui
+            </a>
           </div>
         </div>
       </div>

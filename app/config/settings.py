@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -10,6 +11,24 @@ from dotenv import load_dotenv
 
 def _parse_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+
+
+def _parse_json_dict(value: str) -> dict:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+def _default_cors_origins() -> list[str]:
+    return [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ]
 
 
 # Runtime overrides loaded from DB at startup (key → raw string value).
@@ -40,6 +59,8 @@ def _apply_overrides(kwargs: dict) -> dict:
                 kwargs[key] = float(raw)
             elif isinstance(current, list):
                 kwargs[key] = _parse_csv(raw)
+            elif isinstance(current, dict):
+                kwargs[key] = _parse_json_dict(raw)
             else:
                 kwargs[key] = raw
         except (ValueError, AttributeError):
@@ -54,18 +75,24 @@ class Settings:
     app_port: int = 8000
     log_level: str = "INFO"
     frontend_url: str = "http://localhost:3000"
+    cors_origins: list[str] = field(default_factory=_default_cors_origins)
+    admin_api_token: str = ""
 
     # Database configuration
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch"
     database_sync_url: str = "postgresql://postgres:postgres@localhost:5432/techwatch"
 
-    llm_provider: str = "openrouter"
-    llm_base_url: str = "https://openrouter.ai/api/v1"
+    llm_provider: str = "ollama"
+    llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = ""
     llm_model: str = ""
     llm_fallback_models: list[str] = field(default_factory=list)
+    llm_provider_models: dict[str, dict[str, object]] = field(default_factory=dict)
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
+    embedding_provider: str = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_provider_models: dict[str, str] = field(default_factory=dict)
 
     # Z.ai specific settings
     zai_api_key: str = ""
@@ -95,16 +122,24 @@ class Settings:
 
     sender_email: str = ""
     recipient_emails: list[str] = field(default_factory=list)
+    gmail_credentials_json: str = ""
+    gmail_token_json: str = ""
     gmail_credentials_path: str = "credentials.json"
     gmail_token_path: str = "token.json"
 
     tavily_api_key: str = ""
     serper_api_key: str = ""
+    semantic_scholar_api_key: str = ""
+    github_api_token: str = ""
     # Search providers (used by NewsSearchService fallback chain)
     searxng_url: str = "http://localhost:8080"
     exa_api_key: str = ""
     langsearch_api_key: str = ""
     jina_api_key: str = ""
+    search_web_providers: list[str] = field(default_factory=lambda: ["tavily", "exa", "langsearch"])
+    search_free_providers: list[str] = field(default_factory=lambda: ["searxng"])
+    search_academic_providers: list[str] = field(default_factory=lambda: ["searxng", "arxiv", "semantic_scholar", "openalex"])
+    search_code_providers: list[str] = field(default_factory=lambda: ["searxng", "github"])
     scrapling_fetcher: str = "basic"
     scrapling_timeout: int = 30
     scrapling_max_content_length: int = 50000
@@ -132,6 +167,8 @@ class Settings:
             app_port=int(os.getenv("APP_PORT", "8000")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             frontend_url=os.getenv("FRONTEND_URL", "http://localhost:3000"),
+            cors_origins=_parse_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173")),
+            admin_api_token=os.getenv("ADMIN_API_TOKEN", ""),
             database_url=os.getenv(
                 "DATABASE_URL",
                 "postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch",
@@ -140,13 +177,17 @@ class Settings:
                 "DATABASE_SYNC_URL",
                 "postgresql://postgres:postgres@localhost:5432/techwatch",
             ),
-            llm_provider=os.getenv("LLM_PROVIDER", "openrouter"),
-            llm_base_url=os.getenv("LLM_BASE_URL", ""),
+            llm_provider=os.getenv("LLM_PROVIDER", "ollama"),
+            llm_base_url=os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
             llm_api_key=os.getenv("LLM_API_KEY", ""),
             llm_model=os.getenv("LLM_MODEL", ""),
             llm_fallback_models=_parse_csv(os.getenv("LLM_FALLBACK_MODELS", "")),
+            llm_provider_models=_parse_json_dict(os.getenv("LLM_PROVIDER_MODELS", "{}")),
             llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0.3")),
             llm_max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000")),
+            embedding_provider=os.getenv("EMBEDDING_PROVIDER", os.getenv("LLM_PROVIDER", "openai")),
+            embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+            embedding_provider_models=_parse_json_dict(os.getenv("EMBEDDING_PROVIDER_MODELS", "{}")),
             zai_api_key=os.getenv("ZAI_API_KEY", ""),
             newsletter_title=os.getenv("NEWSLETTER_TITLE", "Tech Watch Agent"),
             newsletter_topics=_parse_csv(
@@ -162,14 +203,22 @@ class Settings:
             crawl_timeout_seconds=int(os.getenv("CRAWL_TIMEOUT_SECONDS", "30")),
             sender_email=os.getenv("SENDER_EMAIL", ""),
             recipient_emails=_parse_csv(os.getenv("RECIPIENT_EMAILS", "")),
+            gmail_credentials_json="",
+            gmail_token_json="",
             gmail_credentials_path=os.getenv("GMAIL_CREDENTIALS_PATH", "credentials.json"),
             gmail_token_path=os.getenv("GMAIL_TOKEN_PATH", "token.json"),
             tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
             serper_api_key=os.getenv("SERPER_API_KEY", ""),
+            semantic_scholar_api_key=os.getenv("SEMANTIC_SCHOLAR_API_KEY", ""),
+            github_api_token=os.getenv("GITHUB_API_TOKEN", ""),
             searxng_url=os.getenv("SEARXNG_URL", "http://localhost:8080"),
             exa_api_key=os.getenv("EXA_API_KEY", ""),
             langsearch_api_key=os.getenv("LANGSEARCH_API_KEY", ""),
             jina_api_key=os.getenv("JINA_API_KEY", ""),
+            search_web_providers=_parse_csv(os.getenv("SEARCH_WEB_PROVIDERS", "tavily,exa,langsearch")),
+            search_free_providers=_parse_csv(os.getenv("SEARCH_FREE_PROVIDERS", "searxng")),
+            search_academic_providers=_parse_csv(os.getenv("SEARCH_ACADEMIC_PROVIDERS", "searxng,arxiv,semantic_scholar,openalex")),
+            search_code_providers=_parse_csv(os.getenv("SEARCH_CODE_PROVIDERS", "searxng,github")),
             scrapling_fetcher=os.getenv("SCRAPLING_FETCHER", "basic"),
             scrapling_timeout=int(os.getenv("SCRAPLING_TIMEOUT", "30")),
             scrapling_max_content_length=int(os.getenv("SCRAPLING_MAX_CONTENT_LENGTH", "50000")),

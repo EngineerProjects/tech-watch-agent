@@ -222,8 +222,7 @@
           <p class="text-[11px]" style="color:var(--text-faint)">Gmail OAuth2 pour l'envoi des newsletters</p>
         </div>
         <div class="flex-shrink-0">
-          {% if s.has_email_delivery %}<span class="badge badge-true">✓ configuré</span>
-          {% else %}<span class="badge badge-false">non configuré</span>{% endif %}
+          <span class="badge badge-true">transport</span>
         </div>
       </div>
       <div class="px-5 divide-y" style="divide-color:rgba(212,165,165,.05)">
@@ -236,22 +235,21 @@
                    placeholder="you@gmail.com"
                    @blur="saveSetting('sender_email', f.sender_email)">
           </div>
-          <div>
-            <p class="text-[11px] font-medium mb-0.5" style="color:var(--text)">Destinataire(s)</p>
-            <p class="text-[10px] mb-2 font-mono" style="color:var(--text-faint)">RECIPIENT_EMAILS</p>
-            <input type="text" x-model="f.recipient_emails" class="form-input text-xs"
-                   placeholder="dest@gmail.com, dest2@gmail.com"
-                   @blur="saveSetting('recipient_emails', f.recipient_emails)">
+          <div class="rounded-lg border px-3 py-3" style="border-color:var(--border); background:rgba(96,165,250,.04)">
+            <p class="text-[11px] font-medium mb-1" style="color:var(--text)">Destinataires</p>
+            <p class="text-[10px] leading-5" style="color:var(--text-faint)">
+              Les destinataires ne se configurent plus ici. Utilisez le frontend React pour créer des <strong style="color:var(--text)">Email Groups</strong>, puis rattachez-les à chaque profil de veille.
+            </p>
           </div>
         </div>
 
         <div class="py-4">
-          <p class="text-[11px] font-medium mb-0.5" style="color:var(--text)">Chemin credentials Gmail</p>
+          <p class="text-[11px] font-medium mb-0.5" style="color:var(--text)">Chemin credentials Gmail (legacy)</p>
           <p class="text-[10px] mb-2 font-mono" style="color:var(--text-faint)">GMAIL_CREDENTIALS_PATH</p>
           <input type="text" x-model="f.gmail_credentials_path" class="form-input text-xs"
                  placeholder="credentials.json"
                  @blur="saveSetting('gmail_credentials_path', f.gmail_credentials_path)">
-          <p class="text-[10px] mt-1" style="color:var(--text-faint)">Fichier OAuth2 depuis Google Cloud Console</p>
+          <p class="text-[10px] mt-1" style="color:var(--text-faint)">Fallback fichier serveur uniquement. La configuration recommandee vit maintenant dans le frontend React et la DB runtime.</p>
         </div>
 
       </div>
@@ -288,13 +286,11 @@
                    placeholder="Europe/Paris"
                    @blur="saveSetting('timezone', f.timezone)">
           </div>
-          <div>
-            <p class="text-[11px] font-medium mb-0.5" style="color:var(--text)">Horaires globaux</p>
-            <p class="text-[10px] mb-2 font-mono" style="color:var(--text-faint)">SCHEDULE_TIMES</p>
-            <input type="text" x-model="f.schedule_times" class="form-input text-xs"
-                   placeholder="08:00,18:00"
-                   @blur="saveSetting('schedule_times', f.schedule_times)">
-            <p class="text-[10px] mt-1" style="color:var(--text-faint)">Préférez les profils de veille</p>
+          <div class="rounded-lg border px-3 py-3" style="border-color:var(--border); background:rgba(96,165,250,.04)">
+            <p class="text-[11px] font-medium mb-1" style="color:var(--text)">Planification</p>
+            <p class="text-[10px] leading-5" style="color:var(--text-faint)">
+              La planification produit vit désormais dans les <strong style="color:var(--text)">watch profiles</strong>. Les horaires globaux historiques ne sont plus la surface principale.
+            </p>
           </div>
         </div>
 
@@ -331,9 +327,7 @@
       <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
     </svg>
     <p class="text-xs" style="color:var(--text-muted)">
-      Les modifications sont sauvegardées en base de données et appliquées immédiatement pour les paramètres non-secrets.
-      Un <strong style="color:var(--text)">redémarrage du conteneur</strong> est nécessaire pour que les clés API prennent effet.
-      Utilisez <strong style="color:var(--text)">Export .env</strong> pour générer un fichier à monter dans le conteneur.
+      Les modifications sont sauvegardées en base de données. Les paramètres runtime non-sensibles sont visibles immédiatement, tandis que certains changements d'infrastructure ou de dépendances externes peuvent nécessiter un redémarrage contrôlé du service.
     </p>
   </div>
 
@@ -360,11 +354,9 @@ function settingsApp() {
       exa_api_key:            '{{ s.exa_api_key }}',
       langsearch_api_key:     '{{ s.langsearch_api_key }}',
       sender_email:           '{{ s.sender_email }}',
-      recipient_emails:       '{{ s.recipient_emails | join(", ") }}',
       gmail_credentials_path: '{{ s.gmail_credentials_path }}',
       newsletter_topics:      '{{ s.newsletter_topics | join(", ") }}',
       timezone:               '{{ s.timezone }}',
-      schedule_times:         '{{ s.schedule_times | join(",") }}',
     },
 
     async saveSetting(key, value) {
@@ -410,32 +402,18 @@ function settingsApp() {
 
 function downloadEnv() {
   const lines = [
-    '# Tech Watch Agent — configuration générée par le dashboard',
+    '# Tech Watch Agent — bootstrap minimal exporte par le dashboard legacy',
     `# ${new Date().toISOString()}`,
     '',
-    '# LLM',
-    `LLM_PROVIDER={{ s.llm_provider }}`,
-    `LLM_BASE_URL={{ s.llm_base_url }}`,
-    `LLM_API_KEY={{ s.llm_api_key }}`,
-    `LLM_MODEL={{ s.llm_model }}`,
-    `LLM_TEMPERATURE={{ s.llm_temperature }}`,
-    `LLM_MAX_TOKENS={{ s.llm_max_tokens }}`,
+    '# Infrastructure / securite uniquement',
+    'DATABASE_URL=',
+    'DATABASE_SYNC_URL=',
+    'ADMIN_API_TOKEN=',
+    'CONFIG_ENCRYPTION_KEY=',
+    'FRONTEND_URL=http://localhost:3000',
+    'CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000',
     '',
-    '# Search',
-    `SEARXNG_URL={{ s.searxng_url }}`,
-    `TAVILY_API_KEY={{ s.tavily_api_key }}`,
-    `EXA_API_KEY={{ s.exa_api_key }}`,
-    `LANGSEARCH_API_KEY={{ s.langsearch_api_key }}`,
-    '',
-    '# Email',
-    `SENDER_EMAIL={{ s.sender_email }}`,
-    `RECIPIENT_EMAILS={{ s.recipient_emails | join(",") }}`,
-    `GMAIL_CREDENTIALS_PATH={{ s.gmail_credentials_path }}`,
-    '',
-    '# Newsletter',
-    `NEWSLETTER_TOPICS={{ s.newsletter_topics | join(",") }}`,
-    `SCHEDULE_TIMES={{ s.schedule_times | join(",") }}`,
-    `TIMEZONE={{ s.timezone }}`,
+    '# Le reste se configure dans le frontend React puis se stocke en DB runtime.',
   ];
   const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
   const a = document.createElement('a');

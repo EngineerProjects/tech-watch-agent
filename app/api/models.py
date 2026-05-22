@@ -102,16 +102,39 @@ class ToolExecuteRequest(BaseModel):
     tool_name: str
     params: dict[str, Any] = Field(default_factory=dict)
 
+class ModelCatalogItemResponse(BaseModel):
+    id: str
+    label: str
+    description: Optional[str] = None
+    context_window: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    dimensions: Optional[int] = None
+    capabilities: list[str] = Field(default_factory=list)
+    recommended_role: Optional[str] = None
+    source: str = "curated"
+    available: Optional[bool] = None
+    family: Optional[str] = None
+    parameter_size: Optional[str] = None
+    quantization: Optional[str] = None
+    size_bytes: Optional[int] = None
+
 class ProviderResponse(BaseModel):
     name: str
+    label: Optional[str] = None
     base_url: str
     default_model: str
     requires_api_key: bool
+    supports_dynamic_discovery: bool = False
+    discovery_error: Optional[str] = None
+    chat_models: list[ModelCatalogItemResponse] = Field(default_factory=list)
+    embedding_models: list[ModelCatalogItemResponse] = Field(default_factory=list)
 
 class ProviderListResponse(BaseModel):
     providers: list[ProviderResponse]
     current_provider: str
     current_model: str
+    current_embedding_provider: Optional[str] = None
+    current_embedding_model: Optional[str] = None
 
 class OrchestratorRequest(BaseModel):
     task: str = "Weekly tech watch"
@@ -194,6 +217,24 @@ class ProviderHealthResponse(BaseModel):
 class ProviderSetRequest(BaseModel):
     provider: str
     model: Optional[str] = None
+
+class OllamaPullRequest(BaseModel):
+    model: str
+
+    @field_validator("model")
+    @classmethod
+    def model_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("model must not be empty")
+        return v
+
+
+class OllamaPullResponse(BaseModel):
+    status: str
+    provider: str
+    model: str
+    message: str
 
 class ToolExecuteResponse(BaseModel):
     success: bool

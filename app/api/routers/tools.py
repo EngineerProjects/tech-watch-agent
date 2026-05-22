@@ -1,6 +1,7 @@
 from typing import Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.security import require_admin_access
 from app.tools.registry import get_global_registry
 from app.api.models import ToolListResponse, ToolExecuteRequest, ToolExecuteResponse
 
@@ -28,7 +29,7 @@ async def get_tool(tool_name: str) -> dict[str, Any]:
 
     return tool.metadata.to_dict()
 
-@router.post("/execute", response_model=ToolExecuteResponse)
+@router.post("/execute", response_model=ToolExecuteResponse, dependencies=[Depends(require_admin_access)])
 async def execute_tool(payload: ToolExecuteRequest) -> ToolExecuteResponse:
     """Execute a tool with given parameters."""
     registry = get_global_registry()

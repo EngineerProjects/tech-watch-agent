@@ -11,6 +11,7 @@ Tests the full pipeline:
 """
 
 import asyncio
+from types import SimpleNamespace
 import uuid
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -196,6 +197,69 @@ class TestSessionManager:
         assert CompactionReason.PHASE_TRANSITION.value == "phase_transition"
         assert CompactionReason.CONTEXT_LIMIT_WARNING.value == "context_limit_warning"
         assert CompactionReason.MANUAL.value == "manual"
+
+
+class TestSessionFinalization:
+    """Tests for terminal session persistence."""
+
+    @pytest.mark.asyncio
+    async def test_finalize_session_sets_completed_state(self):
+        manager = SessionManager(session_id=uuid.uuid4())
+        manager._session = SimpleNamespace(
+            status="running",
+            phase="synthesis",
+            plan=[{"step_id": "step_1", "name": "Synthesis"}],
+            current_step_index=0,
+            research_results=[],
+            analysis_results="",
+            final_report=None,
+            notes=[],
+            raw_notes=[],
+            completed_at=None,
+            updated_at=None,
+            meta_data={"last_error": "stale"},
+        )
+        manager._db_session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        manager._sync_normalized_steps = AsyncMock()
+        manager._sync_normalized_sources = AsyncMock()
+
+        await manager.finalize_session(status="completed", final_report="Final report")
+
+        assert manager._session.status == "completed"
+        assert manager._session.phase == "completed"
+        assert manager._session.final_report == "Final report"
+        assert manager._session.completed_at is not None
+        assert "last_error" not in manager._session.meta_data
+        manager._db_session.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_finalize_session_sets_failure_error_metadata(self):
+        manager = SessionManager(session_id=uuid.uuid4())
+        manager._session = SimpleNamespace(
+            status="running",
+            phase="research",
+            plan=[],
+            current_step_index=0,
+            research_results=[],
+            analysis_results="",
+            final_report=None,
+            notes=[],
+            raw_notes=[],
+            completed_at=None,
+            updated_at=None,
+            meta_data={},
+        )
+        manager._db_session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+        manager._sync_normalized_steps = AsyncMock()
+        manager._sync_normalized_sources = AsyncMock()
+
+        await manager.finalize_session(status="failed", error="boom")
+
+        assert manager._session.status == "failed"
+        assert manager._session.phase == "failed"
+        assert manager._session.meta_data["last_error"] == "boom"
+        assert manager._session.completed_at is not None
+        manager._db_session.commit.assert_awaited_once()
 
 
 class TestPlanValidation:

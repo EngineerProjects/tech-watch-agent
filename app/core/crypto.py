@@ -24,10 +24,14 @@ SENSITIVE_FIELDS: frozenset[str] = frozenset({
     "llm_api_key",
     "tavily_api_key",
     "serper_api_key",
+    "semantic_scholar_api_key",
+    "github_api_token",
     "exa_api_key",
     "langsearch_api_key",
     "jina_api_key",
     "zai_api_key",
+    "gmail_credentials_json",
+    "gmail_token_json",
 })
 
 _ENC_PREFIX = "enc:"
@@ -78,6 +82,11 @@ def decrypt_value(field: str, value: str) -> str:
     except Exception as exc:
         logger.warning("Failed to decrypt field '%s': %s — returning raw value", field, exc)
         return value
+
+
+def is_encryption_active() -> bool:
+    """Return whether Fernet encryption is available for sensitive config."""
+    return _get_fernet() is not None
 
 
 def decrypt_overrides(overrides: dict[str, str]) -> dict[str, str]:

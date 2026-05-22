@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from app.config.settings import Settings, get_settings
-from app.db.base import init_db, close_db
+from app.db.base import close_db
 from app.tools.registry import get_global_registry
 from app.tools.base import BaseTool, ToolCategory
 from app.core.logging import get_logger
@@ -36,6 +36,7 @@ from app.api.routers import (
     watch_profiles_router,
     config_router,
     sources_router,
+    email_groups_router,
 )
 from app.dashboard import dashboard_router
 
@@ -53,15 +54,17 @@ async def _execute_scheduled_profile(profile_id: str, profile_name: str) -> None
         import uuid as _uuid
         from app.core.watch_context import WatchContext
         from app.db.base import async_session_factory
-        from app.db.repositories import WatchProfileRepository
+        from app.db.repositories import EmailGroupRepository, WatchProfileRepository
         from app.scheduler.service import OrchestratorScheduler
 
         async with async_session_factory() as db:
             repo = WatchProfileRepository(db)
+            group_repo = EmailGroupRepository(db)
             profile = await repo.get_by_id(_uuid.UUID(profile_id))
             if not profile:
                 return
 
+            recipients = await group_repo.resolve_recipients_for_profile(profile)
             ctx = WatchContext.from_profile(profile)
             task = f"Tech watch: {', '.join(ctx.topics)}" if ctx.topics else "Weekly tech watch"
 
@@ -69,9 +72,10 @@ async def _execute_scheduled_profile(profile_id: str, profile_name: str) -> None
             await scheduler.run_task(
                 task=task,
                 topics=ctx.topics or None,
-                send_email=True,
+                send_email=bool(recipients),
                 autonomous=True,
                 watch_context=ctx,
+                recipients_override=recipients or None,
             )
 
             await repo.touch_last_run(_uuid.UUID(profile_id))
@@ -181,11 +185,7 @@ async def lifespan(app: FastAPI):
     """Manage application lifecycle - startup and shutdown."""
     # Startup
     logger.info("Starting tech-watch-agent API")
-    try:
-        await init_db()
-        logger.info("Database initialized")
-    except Exception as exc:
-        logger.warning("Database initialization skipped: %s", exc)
+    logger.info("Database schema initialization is managed by Alembic migrations")
 
     # Load DB config overrides so UI-saved settings take effect at runtime
     try:
@@ -246,14 +246,32 @@ def _register_default_tools(settings: Optional[Settings] = None) -> None:
     registry = get_global_registry()
     resolved_settings = settings or get_settings()
 
-    # Multi-provider search (SearXNG + Tavily in parallel, deduped by URL)
+    # API-backed search providers kept separate from SearXNG/free search.
     if "web_search" not in registry:
         try:
             from app.tools.web.multi_search import MultiProviderSearchTool
-            registry.register(MultiProviderSearchTool())
+            registry.register(MultiProviderSearchTool(settings=resolved_settings))
             logger.info("Registered MultiProviderSearch tool as 'web_search'")
         except Exception as exc:
             logger.warning("Failed to register MultiProviderSearch tool: %s", exc)
+
+    # Free/self-hosted search entrypoint.
+    if "free_search" not in registry:
+        try:
+            from app.tools.web.free_search import FreeSearchTool
+            registry.register(FreeSearchTool(settings=resolved_settings))
+            logger.info("Registered FreeSearch tool")
+        except Exception as exc:
+            logger.warning("Failed to register FreeSearch tool: %s", exc)
+
+    # Specialized research search for academic/code discovery.
+    if "research_search" not in registry:
+        try:
+            from app.tools.web.research_search import ResearchSearchTool
+            registry.register(ResearchSearchTool(settings=resolved_settings))
+            logger.info("Registered ResearchSearch tool")
+        except Exception as exc:
+            logger.warning("Failed to register ResearchSearch tool: %s", exc)
 
     # Register SearXNG (self-hosted metasearch — primary free search provider)
     if "searxng" not in registry:
@@ -377,14 +395,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     # Add CORS middleware
     # allow_origins=["*"] is incompatible with allow_credentials=True per the CORS spec.
     # Explicit origins are required for credentialed requests.
-    cors_origins = resolved_settings.cors_origins if hasattr(resolved_settings, "cors_origins") else []
-    if not cors_origins:
-        cors_origins = [
-            "http://localhost:3000",
-            "http://localhost:5173",
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:5173",
-        ]
+    cors_origins = list(resolved_settings.cors_origins)
+    if resolved_settings.frontend_url and resolved_settings.frontend_url not in cors_origins:
+        cors_origins.append(resolved_settings.frontend_url)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
@@ -408,6 +421,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(watch_profiles_router)
     app.include_router(config_router)
     app.include_router(sources_router)
+    app.include_router(email_groups_router)
     app.include_router(dashboard_router)
 
     @app.get("/", include_in_schema=False)

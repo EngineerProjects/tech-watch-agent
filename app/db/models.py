@@ -13,7 +13,7 @@ Each model includes:
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import (
     Boolean,
@@ -334,7 +334,7 @@ class ResearchSession(Base):
     iterations_count: Mapped[int] = mapped_column(Integer, default=0)
     
     # Plan persistence fields
-    plan: Mapped[dict] = mapped_column(JSONType(), default=dict)
+    plan: Mapped[list[dict[str, Any]]] = mapped_column(JSONType(), default=list)
     plan_version: Mapped[int] = mapped_column(Integer, default=0)
     current_step_index: Mapped[int] = mapped_column(Integer, default=0)
     research_results: Mapped[list] = mapped_column(JSONType(), default=list)
@@ -381,7 +381,7 @@ class PlanVersion(Base):
         index=True,
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    plan: Mapped[dict] = mapped_column(JSONType())
+    plan: Mapped[list[dict[str, Any]]] = mapped_column(JSONType(), default=list)
     reason: Mapped[str] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -540,6 +540,87 @@ class ToolExecution(Base):
         return f"<ToolExecution(tool={self.tool_name}, success={self.success})>"
 
 
+class WatchProfileEmailGroup(Base):
+    """Association table between watch profiles and email groups."""
+
+    __tablename__ = "watch_profile_email_groups"
+
+    watch_profile_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("watch_profiles.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    email_group_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("email_groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+    )
+
+
+class EmailGroup(Base):
+    """Reusable group of delivery recipients."""
+
+    __tablename__ = "email_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    recipients: Mapped[list["EmailGroupRecipient"]] = relationship(
+        "EmailGroupRecipient",
+        back_populates="group",
+        cascade="all, delete-orphan",
+        order_by="EmailGroupRecipient.created_at",
+    )
+    watch_profiles: Mapped[list["WatchProfile"]] = relationship(
+        "WatchProfile",
+        secondary="watch_profile_email_groups",
+        back_populates="email_groups",
+    )
+
+    def __repr__(self) -> str:
+        return f"<EmailGroup(id={self.id}, name={self.name!r})>"
+
+
+class EmailGroupRecipient(Base):
+    """Recipient entry attached to an EmailGroup."""
+
+    __tablename__ = "email_group_recipients"
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("email_groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    label: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    group: Mapped["EmailGroup"] = relationship("EmailGroup", back_populates="recipients")
+
+    __table_args__ = (
+        Index("ix_email_group_recipients_group_email_unique", "group_id", "email", unique=True),
+    )
+
+    def __repr__(self) -> str:
+        return f"<EmailGroupRecipient(group_id={self.group_id}, email={self.email!r})>"
+
+
 class WatchProfile(Base):
     """Named watch profile — user-configured recurring tech watch job.
 
@@ -573,6 +654,11 @@ class WatchProfile(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    email_groups: Mapped[list["EmailGroup"]] = relationship(
+        "EmailGroup",
+        secondary="watch_profile_email_groups",
+        back_populates="watch_profiles",
     )
 
     def __repr__(self) -> str:

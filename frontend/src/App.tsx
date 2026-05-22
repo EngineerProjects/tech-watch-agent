@@ -4,10 +4,10 @@ import { Sidebar } from './components/Sidebar';
 import { HomePage } from './pages/HomePage';
 import { SessionsPage } from './pages/SessionsPage';
 import { SessionDetailPage } from './pages/SessionDetailPage';
-import { TopicsPage } from './pages/TopicsPage';
 import { NewsletterPage } from './pages/NewsletterPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SourcesPage } from './pages/SourcesPage';
+import { EmailGroupsPage } from './pages/EmailGroupsPage';
 import { LiveRunModal } from './components/LiveRunModal';
 import { ApiService } from './services/api';
 import type { ActiveSessionInfo, ResearchSession, SessionLaunchPayload } from './types';
@@ -46,7 +46,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-type Page = 'home' | 'sessions' | 'topics' | 'newsletter' | 'sources' | 'settings' | 'detail';
+type Page = 'home' | 'sessions' | 'newsletter' | 'sources' | 'email-groups' | 'settings' | 'detail';
 
 const SESSION_EVENT_TYPES = [
   'session_created', 'phase_transition', 'plan_updated',
@@ -227,9 +227,9 @@ function App() {
           </div>
         )}
 
-        {currentPage === 'topics' && <TopicsPage onOpenSettings={() => setCurrentPage('settings')} />}
         {currentPage === 'newsletter' && <NewsletterPage />}
         {currentPage === 'settings' && <SettingsPage />}
+        {currentPage === 'email-groups' && <EmailGroupsPage />}
 
         {currentPage === 'sources' && <SourcesPage />}
       </main>

@@ -113,7 +113,6 @@ class ArticleStore:
             topic=article.topic,
             published_date=article.published_date,
             relevance_score=article.relevance_score,
-            embedding_vector=embedding,
         )
 
         self.session.add(db_article)

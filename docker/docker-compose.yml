@@ -1,5 +1,23 @@
 services:
-  # Redis for caching and task queue
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-techwatch}
+      POSTGRES_USER: ${POSTGRES_USER:-techwatch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-techwatch}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ../.volumes/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-techwatch} -d ${POSTGRES_DB:-techwatch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - tech-watch-network
+
   redis:
     image: redis:7-alpine
     ports:
@@ -15,8 +33,60 @@ services:
     networks:
       - tech-watch-network
 
-  # FastAPI application server
-  # DB: devinfra-postgres-1 at host port 5432 (user: dev / devpassword / db: techwatch)
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - ../.volumes/searxng-cache:/var/cache/searxng
+    environment:
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8080}
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+    networks:
+      - tech-watch-network
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ../.volumes/ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - tech-watch-network
+
+  ollama-init:
+    image: ollama/ollama:latest
+    profiles:
+      - ollama
+    depends_on:
+      ollama:
+        condition: service_started
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ../.volumes/ollama:/root/.ollama
+      - ./ollama/pull-models.sh:/pull-models.sh:ro
+    command: ["/bin/sh", "/pull-models.sh"]
+    restart: "no"
+    networks:
+      - tech-watch-network
+
   api:
     build:
       context: ..
@@ -28,14 +98,25 @@ services:
       - path: ../.env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
-      DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
-      REDIS_URL: redis://redis:6379
-      SEARXNG_URL: http://host.docker.internal:8080
-      FRONTEND_URL: http://localhost:3000
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://techwatch:techwatch@postgres:5432/techwatch}
+      DATABASE_SYNC_URL: ${DATABASE_SYNC_URL:-postgresql://techwatch:techwatch@postgres:5432/techwatch}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
+      searxng:
+        condition: service_started
     volumes:
       - ../.volumes/logs:/app/logs
     ports:
@@ -59,7 +140,6 @@ services:
     networks:
       - tech-watch-network
 
-  # One-time newsletter generation (run with: make dev-once)
   once:
     build:
       context: ..
@@ -69,14 +149,25 @@ services:
       - path: ../.env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
-      DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
-      REDIS_URL: redis://redis:6379
-      SEARXNG_URL: http://host.docker.internal:8080
-      FRONTEND_URL: http://localhost:3000
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://techwatch:techwatch@postgres:5432/techwatch}
+      DATABASE_SYNC_URL: ${DATABASE_SYNC_URL:-postgresql://techwatch:techwatch@postgres:5432/techwatch}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
+      searxng:
+        condition: service_started
     volumes:
       - ../.volumes/logs:/app/logs
     command: >
@@ -91,7 +182,6 @@ services:
     networks:
       - tech-watch-network
 
-  # Scheduled newsletter generation (run with: make dev-scheduler)
   scheduler:
     build:
       context: ..
@@ -101,14 +191,25 @@ services:
       - path: ../.env
         required: false
     environment:
-      DATABASE_URL: postgresql+asyncpg://dev:devpassword@host.docker.internal:5432/techwatch
-      DATABASE_SYNC_URL: postgresql://dev:devpassword@host.docker.internal:5432/techwatch
-      REDIS_URL: redis://redis:6379
-      SEARXNG_URL: http://host.docker.internal:8080
-      FRONTEND_URL: http://localhost:3000
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://techwatch:techwatch@postgres:5432/techwatch}
+      DATABASE_SYNC_URL: ${DATABASE_SYNC_URL:-postgresql://techwatch:techwatch@postgres:5432/techwatch}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      CONFIG_ENCRYPTION_KEY: ${CONFIG_ENCRYPTION_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
+      searxng:
+        condition: service_started
     volumes:
       - ../.volumes/logs:/app/logs
     command: >
@@ -124,16 +225,12 @@ services:
     networks:
       - tech-watch-network
 
-  # React frontend served by nginx, proxies /api/* to the backend
   frontend:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
       args:
-        # In this compose setup nginx proxies /api → backend, so VITE_API_URL
-        # must point to the nginx /api prefix so the SPA uses relative-style calls.
-        # For local dev outside Docker, override to http://localhost:8000.
-        - VITE_API_URL=/api
+        - VITE_API_URL=${VITE_API_URL:-/api}
     ports:
       - "3000:80"
     depends_on:

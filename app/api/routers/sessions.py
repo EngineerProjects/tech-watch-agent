@@ -12,8 +12,9 @@ Provides endpoints for:
 import uuid
 from datetime import datetime
 from typing import Any, Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.security import require_admin_access
 from app.db.base import async_session_factory
 from app.db.repositories import ResearchSessionRepository
 from app.core.logging import get_logger
@@ -21,7 +22,7 @@ from app.services.session_manager import normalize_plan_payload
 
 
 logger = get_logger(__name__)
-router = APIRouter(prefix="/sessions", tags=["Sessions"])
+router = APIRouter(prefix="/sessions", tags=["Sessions"], dependencies=[Depends(require_admin_access)])
 
 
 def _session_title(session: Any) -> str:
@@ -126,10 +127,7 @@ async def get_session(session_id: str) -> dict[str, Any]:
         if not research_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Get plan versions
         plan_versions = await repo.get_plan_versions(session_uuid)
-
-        # Get checkpoints
         checkpoints = await repo.get_checkpoints(session_uuid)
 
         return {
@@ -306,14 +304,12 @@ async def resume_session(
         if not research_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Check if session can be resumed
         if research_session.status in ["completed", "failed"]:
             raise HTTPException(
                 status_code=400,
                 detail=f"Cannot resume session with status '{research_session.status}'"
             )
 
-        # Get latest checkpoint
         checkpoint = await repo.get_latest_checkpoint(session_uuid) if from_checkpoint else None
 
         return {
@@ -353,8 +349,6 @@ def _get_resume_instructions(phase: str) -> str:
         phase,
         f"Resume from '{phase}' phase. Review checkpoint data for exact state."
     )
-
-
 
 
 @router.delete("/{session_id}", status_code=204)

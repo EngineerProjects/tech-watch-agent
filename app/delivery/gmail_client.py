@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from functools import lru_cache
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -10,12 +12,22 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.config.settings import Settings, get_settings
+from app.core.crypto import encrypt_value, is_encryption_active
 from app.core.logging import get_logger
+from app.db.models import AppConfig
 
 
 logger = get_logger(__name__)
+
+
+@lru_cache(maxsize=4)
+def _get_sync_session_factory(database_sync_url: str):
+    engine = create_engine(database_sync_url, future=True)
+    return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 class GmailDeliveryClient:
@@ -25,15 +37,26 @@ class GmailDeliveryClient:
         self.settings = settings or get_settings()
         self._service = None
 
-    def send_email(self, subject: str, body_html: str, body_text: str) -> bool:
-        if not self.settings.has_email_delivery:
+    def send_email(
+        self,
+        subject: str,
+        body_html: str,
+        body_text: str,
+        recipients: list[str] | None = None,
+    ) -> bool:
+        resolved_recipients = [
+            email.strip()
+            for email in (recipients if recipients is not None else self.settings.recipient_emails)
+            if email and email.strip()
+        ]
+        if not self.settings.sender_email or not resolved_recipients:
             logger.error("Email delivery is not configured")
             return False
 
         try:
             service = self._get_service()
             message = self._create_message(
-                recipients=self.settings.recipient_emails,
+                recipients=resolved_recipients,
                 subject=subject,
                 body_html=body_html,
                 body_text=body_text,
@@ -41,7 +64,7 @@ class GmailDeliveryClient:
             service.users().messages().send(userId="me", body=message).execute()
             logger.info(
                 "Newsletter sent to %s recipients",
-                len(self.settings.recipient_emails),
+                len(resolved_recipients),
             )
             return True
         except (HttpError, OSError, ValueError) as exc:
@@ -57,30 +80,101 @@ class GmailDeliveryClient:
         return self._service
 
     def _load_credentials(self) -> Credentials:
-        token_path = Path(self.settings.gmail_token_path)
-        credentials_path = Path(self.settings.gmail_credentials_path)
-
-        creds = None
-        if token_path.exists():
-            creds = Credentials.from_authorized_user_file(token_path, self.SCOPES)
+        creds = self._load_token_from_json() or self._load_token_from_file()
 
         if creds and creds.valid:
             return creds
 
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            token_path.write_text(creds.to_json(), encoding="utf-8")
+            self._persist_token(creds.to_json())
             return creds
 
-        if not credentials_path.exists():
-            raise ValueError(f"Gmail credentials file not found: {credentials_path}")
-
-        # The first run performs the local OAuth handshake and persists the token
-        # so scheduled runs can send email non-interactively afterward.
-        flow = InstalledAppFlow.from_client_secrets_file(credentials_path, self.SCOPES)
+        flow = self._build_flow()
         creds = flow.run_local_server(port=8090)
-        token_path.write_text(creds.to_json(), encoding="utf-8")
+        self._persist_token(creds.to_json())
         return creds
+
+    def _load_token_from_json(self) -> Credentials | None:
+        raw = self.settings.gmail_token_json.strip()
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Invalid Gmail token JSON in runtime config") from exc
+        return Credentials.from_authorized_user_info(payload, self.SCOPES)
+
+    def _load_token_from_file(self) -> Credentials | None:
+        token_path = Path(self.settings.gmail_token_path)
+        if not token_path.exists():
+            return None
+        return Credentials.from_authorized_user_file(token_path, self.SCOPES)
+
+    def _build_flow(self) -> InstalledAppFlow:
+        raw = self.settings.gmail_credentials_json.strip()
+        if raw:
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Invalid Gmail credentials JSON in runtime config") from exc
+            return InstalledAppFlow.from_client_config(payload, self.SCOPES)
+
+        credentials_path = Path(self.settings.gmail_credentials_path)
+        if not credentials_path.exists():
+            raise ValueError(
+                "Gmail OAuth is not configured. Save gmail_credentials_json in Settings "
+                f"or mount the legacy credentials file at {credentials_path}."
+            )
+
+        return InstalledAppFlow.from_client_secrets_file(credentials_path, self.SCOPES)
+
+    def _persist_token(self, token_json: str) -> None:
+        if not token_json:
+            return
+
+        using_db_storage = bool(
+            self.settings.gmail_credentials_json.strip() or self.settings.gmail_token_json.strip()
+        )
+        self.settings.gmail_token_json = token_json
+
+        if using_db_storage:
+            self._persist_token_json(token_json)
+
+        token_path = self.settings.gmail_token_path.strip()
+        if token_path:
+            self._persist_token_file(token_path, token_json)
+
+    def _persist_token_json(self, token_json: str) -> None:
+        if (
+            self.settings.app_env.lower() in {"production", "staging"}
+            and not is_encryption_active()
+        ):
+            logger.warning(
+                "Skipping Gmail token DB persistence because CONFIG_ENCRYPTION_KEY is missing"
+            )
+            return
+
+        try:
+            session_factory = _get_sync_session_factory(self.settings.database_sync_url)
+            with session_factory() as session:
+                record = session.get(AppConfig, "gmail_token_json")
+                stored = encrypt_value("gmail_token_json", token_json)
+                if record is None:
+                    session.add(AppConfig(key="gmail_token_json", value=stored))
+                else:
+                    record.value = stored
+                session.commit()
+        except Exception as exc:
+            logger.warning("Could not persist Gmail token to runtime config DB: %s", exc)
+
+    def _persist_token_file(self, token_path: str, token_json: str) -> None:
+        try:
+            path = Path(token_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(token_json, encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Could not persist Gmail token to %s: %s", token_path, exc)
 
     def _create_message(
         self,

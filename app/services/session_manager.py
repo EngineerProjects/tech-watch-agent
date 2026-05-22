@@ -547,6 +547,7 @@ class SessionManager:
         notes: Optional[list[str]] = None,
         raw_notes: Optional[list[str]] = None,
         completed_at: Optional[datetime] = None,
+        error: Optional[str] = None,
     ) -> None:
         """Persist run state updates on the existing research session."""
         if not self._session:
@@ -575,13 +576,58 @@ class SessionManager:
                 self._session.raw_notes = raw_notes
             if completed_at is not None:
                 self._session.completed_at = completed_at
+            elif status in {SessionPhase.COMPLETED.value, SessionPhase.FAILED.value} and self._session.completed_at is None:
+                self._session.completed_at = datetime.now()
+            if error is not None:
+                meta_data = dict(self._session.meta_data or {})
+                cleaned_error = str(error).strip()
+                if cleaned_error:
+                    meta_data["last_error"] = cleaned_error[:500]
+                else:
+                    meta_data.pop("last_error", None)
+                self._session.meta_data = meta_data
 
             self._session.updated_at = datetime.now()
+            await self._sync_normalized_steps(normalize_plan_payload(self._session.plan))
+            await self._sync_normalized_sources(self._session.research_results or [])
             await self._db_session.commit()
         except Exception as exc:
             logger.error("Failed to update session: %s", exc)
             await self._db_session.rollback()
             raise
+
+    async def finalize_session(
+        self,
+        *,
+        status: str,
+        plan: Optional[list[dict]] = None,
+        current_step_index: Optional[int] = None,
+        research_results: Optional[list[dict]] = None,
+        analysis_results: Optional[str] = None,
+        final_report: Optional[str] = None,
+        notes: Optional[list[str]] = None,
+        raw_notes: Optional[list[str]] = None,
+        completed_at: Optional[datetime] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Persist a terminal session state through the shared session manager path."""
+        if status not in {SessionPhase.COMPLETED.value, SessionPhase.FAILED.value}:
+            raise ValueError(f"Unsupported terminal status: {status}")
+
+        terminal_phase = SessionPhase.COMPLETED if status == SessionPhase.COMPLETED.value else SessionPhase.FAILED
+        await self.update_session(
+            status=status,
+            phase=terminal_phase,
+            plan=plan,
+            current_step_index=current_step_index,
+            research_results=research_results,
+            analysis_results=analysis_results,
+            final_report=final_report,
+            notes=notes,
+            raw_notes=raw_notes,
+            completed_at=completed_at or datetime.now(),
+            error=error if status == SessionPhase.FAILED.value else "",
+        )
 
     def estimate_memory_size(self, state: dict) -> int:
         """Estimate current memory size from state.

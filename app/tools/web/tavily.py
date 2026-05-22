@@ -120,7 +120,7 @@ Best for: deep research, fact-checking, multi-source synthesis."""
             return {
                 "success": False,
                 "data": None,
-                "error": "Tavily API key not configured. Set TAVILY_API_KEY in .env",
+                "error": "Tavily API key not configured. Configure it in Paramètres > Search & Crawl",
                 "metadata": {},
             }
 

@@ -5,7 +5,7 @@ import {
   Clock, Repeat, RotateCcw, Send, Plus,
 } from 'lucide-react';
 import { ApiService } from '../services/api';
-import type { SessionLaunchPayload } from '../types';
+import type { EmailGroupSummary, SessionLaunchPayload } from '../types';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -17,6 +17,7 @@ interface NewSessionModalProps {
   onClose: () => void;
   onRunImmediate: (payload: SessionLaunchPayload) => void;
   onScheduled?: () => void;
+  availableEmailGroups?: EmailGroupSummary[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -182,7 +183,7 @@ function TimePicker({ value, onChange }: TimePickerProps) {
 // ── Main Modal ────────────────────────────────────────────────────────────────
 
 export const NewSessionModal: React.FC<NewSessionModalProps> = ({
-  isOpen, onClose, onRunImmediate, onScheduled,
+  isOpen, onClose, onRunImmediate, onScheduled, availableEmailGroups = [],
 }) => {
   // Task fields
   const [name, setName] = useState('');
@@ -201,6 +202,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
   const [selectedDays, setSelectedDays] = useState<string[]>(['monday']);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [intervalMonths, setIntervalMonths] = useState(1);
+  const [selectedEmailGroupIds, setSelectedEmailGroupIds] = useState<string[]>([]);
 
   // UI state
   const [submitting, setSubmitting] = useState(false);
@@ -223,7 +225,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
     setDepth('standard'); setFormat('report'); setSendEmail(false);
     setMode('immediate'); setFreqType('weekly');
     setScheduleTime('08:00'); setSelectedDays(['monday']);
-    setSelectedDate(null); setIntervalMonths(1);
+    setSelectedDate(null); setIntervalMonths(1); setSelectedEmailGroupIds([]);
     setError(null); setSubmitting(false);
   };
 
@@ -272,6 +274,7 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
         schedule_days: freqType === 'weekly' ? selectedDays : [],
         schedule_date: selectedDate || undefined,
         schedule_interval_months: freqType === 'custom' ? intervalMonths : freqType === 'monthly' ? 1 : undefined,
+        email_group_ids: selectedEmailGroupIds,
         is_active: true,
       });
       onScheduled?.();
@@ -585,6 +588,39 @@ export const NewSessionModal: React.FC<NewSessionModalProps> = ({
                         </div>
                       </div>
                     )}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <label style={labelStyle}>Groupes email</label>
+                      {availableEmailGroups.length === 0 ? (
+                        <div style={{ padding: '12px 14px', borderRadius: '10px', border: '1px dashed var(--border-color)', color: 'var(--text-muted)', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                          Aucun groupe disponible. Créez d'abord un groupe dans la page Email Groups si vous voulez un envoi automatique.
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                          {availableEmailGroups.map((group) => {
+                            const active = selectedEmailGroupIds.includes(group.id);
+                            return (
+                              <button
+                                key={group.id}
+                                type="button"
+                                onClick={() => setSelectedEmailGroupIds((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}
+                                style={{
+                                  padding: '8px 12px',
+                                  borderRadius: '999px',
+                                  border: active ? '1px solid rgba(124,140,255,0.35)' : '1px solid var(--border-color)',
+                                  backgroundColor: active ? 'rgba(124,140,255,0.10)' : 'rgba(255,255,255,0.03)',
+                                  color: active ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                                  fontSize: '0.82rem',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {group.name} · {group.recipient_count}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Summary */}
                     <div style={{ marginTop: 'auto', padding: '12px 14px', backgroundColor: 'rgba(124,140,255,0.06)', borderRadius: '10px', border: '1px solid rgba(124,140,255,0.15)', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>

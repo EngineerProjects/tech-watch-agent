@@ -6,10 +6,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 import markdown2
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from app.api.security import require_admin_access
 from app.config.settings import get_settings
 from app.core.logging import get_logger
 from app.services.session_manager import normalize_plan_payload
@@ -18,7 +19,7 @@ logger = get_logger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-router = APIRouter(prefix="/ui", tags=["Dashboard"])
+router = APIRouter(prefix="/ui", tags=["Dashboard"], dependencies=[Depends(require_admin_access)])
 
 
 def _md(text: str) -> str:
@@ -151,6 +152,7 @@ async def _get_newsletter_history(limit: int = 30) -> list[dict]:
 
 # ── Pages ──────────────────────────────────────────────────────────────────────
 
+@router.get("", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_home(request: Request) -> HTMLResponse:
     settings = get_settings()

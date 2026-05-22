@@ -2,14 +2,14 @@
 Embedding service for vector search.
 
 Provides real embeddings using:
-1. OpenAI embeddings (text-embedding-3-small) - primary
-2. Ollama embeddings (nomic-embed-text) - fallback
-3. Z.ai embeddings - available provider
+1. OpenAI embeddings
+2. OpenRouter embeddings
+3. Z.ai embeddings
+4. Ollama embeddings
 
 Features:
 - Batch processing for efficiency
-- Automatic retry with exponential backoff
-- Caching to reduce API calls
+- In-memory caching
 - Fallback chain for resilience
 """
 
@@ -39,16 +39,8 @@ class EmbeddingResult:
 
 
 class EmbeddingService:
-    """Multi-provider embedding service with fallback support.
+    """Multi-provider embedding service with fallback support."""
 
-    Usage:
-        service = EmbeddingService()
-        result = await service.embed("Your text here")
-        print(result.embedding)
-    """
-
-    # Class-level sentinel: once ALL providers have failed in this process,
-    # skip the whole retry chain and return the deterministic fallback instantly.
     _providers_all_failed: bool = False
 
     def __init__(
@@ -57,31 +49,27 @@ class EmbeddingService:
         model: Optional[str] = None,
     ) -> None:
         self._settings = get_settings()
-        self._provider = provider or self._settings.llm_provider
-        self._model = model or self._get_default_model()
+        self._provider = provider or self._settings.embedding_provider
+        self._model = model or self._settings.embedding_model or self._get_default_model()
         self._cache: dict[str, list[float]] = {}
         self._cache_size = 1000
 
     def _get_default_model(self) -> str:
-        """Get default embedding model for current provider."""
         if self._provider == "openai":
             return "text-embedding-3-small"
-        elif self._provider == "zai":
+        if self._provider == "openrouter":
+            return "openai/text-embedding-3-small"
+        if self._provider == "zai":
             return "embedding-2"
-        elif self._provider == "ollama":
-            return "nomic-embed-text"
+        if self._provider == "ollama":
+            from app.services.llm.model_catalog import discover_ollama_catalog
+
+            discovered = discover_ollama_catalog(self._settings.llm_base_url)
+            embedding_models = discovered.get("embedding_models", []) or []
+            return embedding_models[0].id if embedding_models else ""
         return "text-embedding-3-small"
 
     async def embed(self, text: str) -> EmbeddingResult:
-        """Generate embedding for a single text.
-
-        Args:
-            text: Text to embed
-
-        Returns:
-            EmbeddingResult with embedding vector
-        """
-        # Fast path: all providers already known to be down in this process
         if EmbeddingService._providers_all_failed:
             return self._embed_fallback(text)
 
@@ -103,6 +91,8 @@ class EmbeddingService:
     async def _embed_via_provider(self, provider: str, text: str) -> EmbeddingResult:
         if provider == "openai":
             return await self._embed_openai(text)
+        if provider == "openrouter":
+            return await self._embed_openrouter(text)
         if provider == "zai":
             return await self._embed_zai(text)
         if provider == "ollama":
@@ -110,12 +100,14 @@ class EmbeddingService:
         raise ValueError(f"Unsupported embedding provider: {provider}")
 
     def _fallback_providers(self, failed_provider: str) -> list[str]:
-        providers = ["openai", "zai", "ollama"]
+        providers = ["openai", "openrouter", "zai", "ollama"]
         ordered = [p for p in providers if p != failed_provider]
 
         def configured(provider: str) -> bool:
             if provider == "openai":
                 return bool(self._settings.llm_api_key)
+            if provider == "openrouter":
+                return bool(self._settings.llm_api_key and self._settings.llm_base_url)
             if provider == "zai":
                 return bool(self._settings.zai_api_key or self._settings.llm_api_key)
             if provider == "ollama":
@@ -125,96 +117,84 @@ class EmbeddingService:
         return [provider for provider in ordered if configured(provider)]
 
     async def embed_batch(self, texts: list[str]) -> list[EmbeddingResult]:
-        """Generate embeddings for multiple texts.
-
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            List of EmbeddingResult
-        """
         results = []
         for text in texts:
-            result = await self.embed(text)
-            results.append(result)
+            results.append(await self.embed(text))
         return results
 
     async def _embed_openai(self, text: str) -> EmbeddingResult:
-        """Generate embedding using OpenAI API."""
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=get_settings().llm_api_key)
-
-        cache_key = self._cache_key(text)
-        if cache_key in self._cache:
-            return EmbeddingResult(
-                embedding=self._cache[cache_key],
-                model=self._model,
-                provider="openai",
-                cached=True,
-            )
-
-        try:
-            response = await client.embeddings.create(
-                model=self._model,
-                input=text[:8000],
-            )
-            embedding = response.data[0].embedding
-
-            self._add_to_cache(cache_key, embedding)
-
-            return EmbeddingResult(
-                embedding=embedding,
-                model=self._model,
-                provider="openai",
-                tokens_used=response.usage.total_tokens,
-            )
-        except Exception:
-            raise
-
-    async def _embed_zai(self, text: str) -> EmbeddingResult:
-        """Generate embedding using Z.ai API."""
-        from openai import AsyncOpenAI
-
-        settings = get_settings()
-        client = AsyncOpenAI(
-            api_key=settings.zai_api_key or settings.llm_api_key,
-            base_url="https://api.z.ai/api/paas/v1",
+        client = AsyncOpenAI(api_key=self._settings.llm_api_key)
+        return await self._embed_openai_compatible(
+            client=client,
+            provider_name="openai",
+            text=text,
+            model=self._model,
         )
 
+    async def _embed_openrouter(self, text: str) -> EmbeddingResult:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(
+            api_key=self._settings.llm_api_key,
+            base_url=(self._settings.llm_base_url or "https://openrouter.ai/api/v1"),
+        )
+        return await self._embed_openai_compatible(
+            client=client,
+            provider_name="openrouter",
+            text=text,
+            model=self._model,
+        )
+
+    async def _embed_zai(self, text: str) -> EmbeddingResult:
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(
+            api_key=self._settings.zai_api_key or self._settings.llm_api_key,
+            base_url="https://api.z.ai/api/paas/v4",
+        )
+        return await self._embed_openai_compatible(
+            client=client,
+            provider_name="zai",
+            text=text,
+            model=self._model,
+        )
+
+    async def _embed_openai_compatible(self, client, provider_name: str, text: str, model: str) -> EmbeddingResult:
         cache_key = self._cache_key(text)
         if cache_key in self._cache:
             return EmbeddingResult(
                 embedding=self._cache[cache_key],
-                model=self._model,
-                provider="zai",
+                model=model,
+                provider=provider_name,
                 cached=True,
             )
 
-        try:
-            response = await client.embeddings.create(
-                model=self._model,
-                input=text[:8000],
-            )
-            embedding = response.data[0].embedding
+        response = await client.embeddings.create(
+            model=model,
+            input=text[:8000],
+        )
+        embedding = response.data[0].embedding
+        self._add_to_cache(cache_key, embedding)
 
-            self._add_to_cache(cache_key, embedding)
-
-            return EmbeddingResult(
-                embedding=embedding,
-                model=self._model,
-                provider="zai",
-                tokens_used=response.usage.total_tokens,
-            )
-        except Exception:
-            raise
+        usage = getattr(response, "usage", None)
+        tokens_used = getattr(usage, "total_tokens", 0) if usage is not None else 0
+        return EmbeddingResult(
+            embedding=embedding,
+            model=model,
+            provider=provider_name,
+            tokens_used=tokens_used,
+        )
 
     async def _embed_ollama(self, text: str) -> EmbeddingResult:
-        """Generate embedding using Ollama API."""
         import httpx
 
-        settings = get_settings()
-        base_url = settings.llm_base_url or "http://localhost:11434/v1"
+        if not self._model:
+            raise ValueError("No Ollama embedding model configured or detected")
+
+        base_url = (self._settings.llm_base_url or "http://localhost:11434/v1").rstrip("/")
+        api_url = base_url[:-3] if base_url.endswith("/v1") else base_url
 
         cache_key = self._cache_key(text)
         if cache_key in self._cache:
@@ -225,35 +205,27 @@ class EmbeddingService:
                 cached=True,
             )
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0) as http_client:
-                response = await http_client.post(
-                    f"{base_url}/embeddings",
-                    json={"model": self._model, "prompt": text[:8000]},
-                )
-                response.raise_for_status()
-                data = response.json()
-                embedding = data.get("embedding", [])
+        async with httpx.AsyncClient(timeout=60.0) as http_client:
+            response = await http_client.post(
+                f"{api_url}/api/embed",
+                json={"model": self._model, "input": text[:8000]},
+            )
+            response.raise_for_status()
+            data = response.json()
+            embeddings = data.get("embeddings") or []
+            embedding = embeddings[0] if embeddings else data.get("embedding", [])
 
-                if not embedding:
-                    raise ValueError("Empty embedding response")
+            if not embedding:
+                raise ValueError("Empty embedding response")
 
-                self._add_to_cache(cache_key, embedding)
-
-                return EmbeddingResult(
-                    embedding=embedding,
-                    model=self._model,
-                    provider="ollama",
-                )
-        except Exception:
-            raise
+            self._add_to_cache(cache_key, embedding)
+            return EmbeddingResult(
+                embedding=embedding,
+                model=self._model,
+                provider="ollama",
+            )
 
     async def _embed_with_fallback(self, text: str, failed_provider: str) -> EmbeddingResult:
-        """Try alternate providers before using the deterministic fallback.
-
-        No sleep between providers: auth errors (401/404) are deterministic,
-        backoff only adds latency without any benefit.
-        """
         providers = self._fallback_providers(failed_provider)
         for provider in providers:
             try:
@@ -261,13 +233,11 @@ class EmbeddingService:
             except Exception as exc:
                 logger.warning("Fallback provider %s failed: %s", provider, exc)
 
-        # All providers exhausted — mark at class level so future calls skip the chain
         logger.warning("All embedding providers failed, switching to deterministic fallback")
         EmbeddingService._providers_all_failed = True
         return self._embed_fallback(text)
 
     def _embed_fallback(self, text: str) -> EmbeddingResult:
-        """Deterministic local fallback embedding for development/offline mode."""
         import math
 
         embedding: list[float] = []
@@ -297,12 +267,10 @@ class EmbeddingService:
         )
 
     async def _sleep_with_backoff(self, attempt: int) -> None:
-        """Sleep with exponential backoff."""
         import asyncio
         await asyncio.sleep(2**attempt)
 
     def _add_to_cache(self, key: str, embedding: list[float]) -> None:
-        """Add embedding to cache with LRU eviction."""
         if len(self._cache) >= self._cache_size:
             oldest = next(iter(self._cache))
             del self._cache[oldest]
@@ -310,7 +278,6 @@ class EmbeddingService:
 
     @staticmethod
     def _cache_key(text: str) -> str:
-        """Generate cache key from text."""
         return hashlib.sha256(text.encode()).hexdigest()[:64]
 
 
@@ -318,5 +285,4 @@ def create_embedding_service(
     provider: Optional[str] = None,
     model: Optional[str] = None,
 ) -> EmbeddingService:
-    """Factory function to create embedding service."""
     return EmbeddingService(provider=provider, model=model)

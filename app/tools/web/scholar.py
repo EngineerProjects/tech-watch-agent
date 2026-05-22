@@ -90,7 +90,7 @@ Best for: academic research, finding foundational papers, verifying scientific c
             return {
                 "success": False,
                 "data": None,
-                "error": "Serper API key not configured. Set SERPER_API_KEY in .env",
+                "error": "Serper API key not configured. Configure it in Paramètres > Search & Crawl",
                 "metadata": {},
             }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -66,3 +67,33 @@ async def test_search_memory_uses_vector_store_signature(monkeypatch: pytest.Mon
     assert captured["similarity_threshold"] == 0.5
     assert captured["filter_metadata"] == {"topic": "AI"}
     assert captured["query_embedding"]
+
+
+@pytest.mark.asyncio
+async def test_article_store_persists_vectors_only_in_vector_store() -> None:
+    from app.core.models import Article
+    from app.rag.article_store import ArticleStore
+
+    session = MagicMock()
+    session.add = MagicMock()
+    session.flush = AsyncMock()
+    session.refresh = AsyncMock()
+
+    vector_store = MagicMock()
+    vector_store.generate_embedding = AsyncMock(return_value=[0.1] * DEFAULT_EMBEDDING_DIM)
+    vector_store.upsert = AsyncMock(return_value=True)
+
+    store = ArticleStore(session=session, vector_store=vector_store)
+    article = Article(
+        title="AI Weekly",
+        summary="Latest AI summary",
+        url="https://example.com/ai-weekly",
+        topic="AI",
+        source="test",
+    )
+
+    await store.save(article)
+
+    persisted = session.add.call_args.args[0]
+    assert persisted.embedding_vector is None
+    vector_store.upsert.assert_awaited_once()
