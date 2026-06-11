@@ -1,0 +1,85 @@
+name: Python CI
+
+on:
+  push:
+    branches: [main, master, dev, 'feat/**', 'fix/**', 'chore/**', 'hotfix/**']
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'alembic/**'
+      - 'pyproject.toml'
+      - '.github/workflows/ci-python.yml'
+  pull_request:
+    branches: [main, master, dev]
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'alembic/**'
+      - 'pyproject.toml'
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dev dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check .
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: techwatch_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/techwatch_test
+      DATABASE_SYNC_URL: postgresql://postgres:postgres@localhost:5432/techwatch_test
+      ADMIN_API_TOKEN: ci-test-token
+      CONFIG_ENCRYPTION_KEY: ""
+      LLM_API_KEY: ci-test-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: pytest tests/ -v --cov=app --cov-report=xml
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
