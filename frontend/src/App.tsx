@@ -126,7 +126,7 @@ function App() {
   // detail page immediately, then open the SSE stream so events start flowing.
   const handleRunLive = useCallback(async (payload: SessionLaunchPayload) => {
     // Optimistic local ID while the POST is in flight
-    let sessionId = crypto.randomUUID();
+    let sessionId: string = crypto.randomUUID();
     try {
       const created = await ApiService.createSession(payload);
       sessionId = created.session_id;

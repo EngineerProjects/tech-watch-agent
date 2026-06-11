@@ -30,9 +30,13 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dev dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: |
+          uv venv .venv --python ${{ env.PYTHON_VERSION }}
+          uv pip install --python .venv/bin/python -e ".[dev]"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
 
       - name: ruff check
         run: ruff check .
@@ -68,9 +72,13 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: |
+          uv venv .venv --python ${{ env.PYTHON_VERSION }}
+          uv pip install --python .venv/bin/python -e ".[dev]"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
 
       - name: Run migrations
         run: alembic upgrade head
