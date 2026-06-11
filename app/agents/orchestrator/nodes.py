@@ -48,6 +48,7 @@ from app.agents.orchestrator.prompts import (
     SYNTHESIZER_SYSTEM,
     EMAILER_USER,
 )
+from langgraph.types import RunnableConfig
 from app.services.llm import ChatCompletionClient
 from app.services.llm.health import LLMHealthManager, get_health_manager
 from app.tools.registry import get_global_registry
@@ -597,11 +598,29 @@ class OrchestratorNodes:
         if isinstance(watch_ctx, dict):
             watch_ctx = WatchContext(**watch_ctx)
 
-        import random
         from datetime import datetime as _dt
-        # Add a per-session seed so the LLM generates different plans across runs
         session_seed = state.get("session_id", "")[-6:] if state.get("session_id") else ""
         run_ts = _dt.now().strftime("%H:%M:%S")
+
+        # Inject vector memory context so the planner avoids repeating past research
+        memory_block = ""
+        try:
+            from app.tools.memory.search_memory import SearchMemoryTool
+            _mem = SearchMemoryTool()
+            _mem_result = await _mem.execute({"query": task, "top_k": 8, "min_score": 0.25})
+            if _mem_result.get("success"):
+                _recent = _mem_result.get("data", {}).get("results", [])
+                if _recent:
+                    _covered_topics = list({r.get("topic", "") for r in _recent if r.get("topic")})
+                    _titles = [r["title"] for r in _recent[:6] if r.get("title")]
+                    memory_block = "\n\n## Previously researched (avoid repeating)\n"
+                    if _covered_topics:
+                        memory_block += f"Topics already covered: {', '.join(_covered_topics[:6])}\n"
+                    memory_block += "Recent articles already in memory:\n"
+                    memory_block += "\n".join(f"- {t}" for t in _titles)
+                    memory_block += "\nFocus on NEW angles, sources, and developments not yet covered."
+        except Exception as _mem_exc:
+            logger.debug("Planner memory fetch failed (non-blocking): %s", _mem_exc)
 
         prompt = PLANNER_USER.format(
             task=task,
@@ -613,7 +632,7 @@ class OrchestratorNodes:
             current_month=watch_ctx.month_name,
             topic=", ".join(topics) if isinstance(topics, list) else str(topics),
         )
-        # Append a uniqueness hint so repeated tasks yield different plans
+        prompt += memory_block
         prompt += f"\n\n[session={session_seed} ts={run_ts} vary_approach=true]"
 
         try:
@@ -1086,10 +1105,41 @@ Rules:
                 data.setdefault("source", tool)
                 all_articles_data.append(data)
 
+        # 1b. Inter-session deduplication: separate fresh articles from already-known ones.
+        # Fresh articles (not yet in the Article table) are ranked first; known ones are
+        # appended as fallback so the session is never empty if all results are familiar.
+        fresh_articles_data = all_articles_data
+        known_articles_data: list[dict] = []
+        candidate_urls = [a.get("url", "") for a in all_articles_data if a.get("url")]
+        if candidate_urls:
+            try:
+                from sqlalchemy import select
+                from app.db.base import get_db_context
+                from app.db.models import Article as _ArticleDB
+                async with get_db_context() as _db:
+                    rows = await _db.execute(
+                        select(_ArticleDB.url).where(_ArticleDB.url.in_(candidate_urls))
+                    )
+                    known_urls: set[str] = {r[0] for r in rows}
+                fresh_articles_data = [a for a in all_articles_data if a.get("url") not in known_urls]
+                known_articles_data = [a for a in all_articles_data if a.get("url") in known_urls]
+                if fresh_articles_data:
+                    logger.info(
+                        "Collector dedup: %d new, %d already seen (suppressed)",
+                        len(fresh_articles_data), len(known_articles_data),
+                    )
+                else:
+                    # Nothing new — fall back to all articles to avoid empty synthesis
+                    fresh_articles_data = all_articles_data
+                    known_articles_data = []
+                    logger.info("Collector dedup: all %d articles already seen, keeping all", len(all_articles_data))
+            except Exception as _dedup_exc:
+                logger.debug("Inter-session dedup skipped (non-blocking): %s", _dedup_exc)
+
         # 2. Convert to Article objects for ranking
         from app.core.models import Article as ArticleModel
         articles_to_rank = []
-        for a in all_articles_data:
+        for a in fresh_articles_data:
             articles_to_rank.append(ArticleModel(
                 title=a.get("title", a.get("name", "")),
                 summary=a.get("summary", a.get("description", "")),
@@ -1414,25 +1464,35 @@ Rules:
     async def human_approval(self, state: OrchestratorState) -> OrchestratorState:
         """Human-in-the-loop approval checkpoint.
 
-        This node pauses execution and waits for human approval.
-        In a real implementation, this would use LangGraph's interrupt
-        mechanism or a message queue to pause and wait for user input.
-
-        For now, it automatically approves if quality score is above threshold.
+        In autonomous mode: auto-approves if quality >= threshold.
+        In interactive mode (autonomous=False): pauses the graph when quality
+        is below threshold so the user can review research results before synthesis.
+        The streaming service detects approval_result="awaiting_approval" and
+        emits an `approval_required` SSE event, then saves session state.
         """
         quality_score = state.get("quality_score", 0.0)
         approval_threshold = state.get("approval_threshold", 0.7)
-
-        state["approval_status"] = "auto_approved" if quality_score >= approval_threshold else "needs_review"
+        autonomous = state.get("autonomous", True)
 
         if quality_score >= approval_threshold:
             logger.info("Auto-approved: quality %.2f >= threshold %.2f", quality_score, approval_threshold)
             state["approval_result"] = "approved"
+            state["approval_status"] = "auto_approved"
+            state["approved_at"] = datetime.now().isoformat()
+        elif autonomous:
+            # Autonomous mode: bypass regardless of quality
+            logger.warning("Bypassing approval in autonomous mode (quality %.2f < %.2f)",
+                           quality_score, approval_threshold)
+            state["approval_result"] = "approved"
+            state["approval_status"] = "auto_approved_autonomous"
+            state["approved_at"] = datetime.now().isoformat()
         else:
-            logger.warning("Needs review: quality %.2f < threshold %.2f", quality_score, approval_threshold)
-            state["approval_result"] = "pending"
-
-        state["approved_at"] = datetime.now().isoformat() if quality_score >= approval_threshold else None
+            # Interactive mode + low quality: pause for human review
+            logger.info("Interactive mode: pausing for human approval (quality %.2f < %.2f)",
+                        quality_score, approval_threshold)
+            state["approval_result"] = "awaiting_approval"
+            state["approval_status"] = "needs_review"
+            state["approved_at"] = None
 
         return state
 
@@ -1504,7 +1564,7 @@ Rules:
 
         return state
 
-    async def synthesizer(self, state: OrchestratorState, config: Optional[dict] = None) -> OrchestratorState:
+    async def synthesizer(self, state: OrchestratorState, config: Optional[RunnableConfig] = None) -> OrchestratorState:
         """Create the final comprehensive report.
 
         Also stores the report in ResearchSession for future reference.

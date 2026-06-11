@@ -171,7 +171,13 @@ async def create_profile(body: WatchProfileCreate) -> WatchProfileResponse:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         await db.commit()
         refreshed = await repo.get_by_id(created.id)
-        return WatchProfileResponse.from_model(refreshed or created)
+        result = refreshed or created
+        try:
+            from app.scheduler.persistent import get_profile_scheduler
+            get_profile_scheduler().on_profile_created(result)
+        except Exception:
+            pass
+        return WatchProfileResponse.from_model(result)
 
 
 @router.get("/{profile_id}", response_model=WatchProfileResponse)
@@ -204,6 +210,11 @@ async def update_profile(profile_id: str, body: WatchProfileUpdate) -> WatchProf
 
         updated = await repo.update(profile)
         await db.commit()
+        try:
+            from app.scheduler.persistent import get_profile_scheduler
+            get_profile_scheduler().on_profile_updated(updated)
+        except Exception:
+            pass
         return WatchProfileResponse.from_model(updated)
 
 
@@ -215,6 +226,11 @@ async def delete_profile(profile_id: str) -> None:
         if not deleted:
             raise HTTPException(status_code=404, detail="Profile not found")
         await db.commit()
+    try:
+        from app.scheduler.persistent import get_profile_scheduler
+        get_profile_scheduler().on_profile_deleted(profile_id)
+    except Exception:
+        pass
 
 
 @router.post("/{profile_id}/run")

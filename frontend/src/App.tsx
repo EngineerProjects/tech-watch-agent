@@ -8,6 +8,7 @@ import { NewsletterPage } from './pages/NewsletterPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SourcesPage } from './pages/SourcesPage';
 import { EmailGroupsPage } from './pages/EmailGroupsPage';
+import { WatchProfilesPage } from './pages/WatchProfilesPage';
 import { LiveRunModal } from './components/LiveRunModal';
 import { ApiService } from './services/api';
 import type { ActiveSessionInfo, ResearchSession, SessionLaunchPayload } from './types';
@@ -46,7 +47,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-type Page = 'home' | 'sessions' | 'newsletter' | 'sources' | 'email-groups' | 'settings' | 'detail';
+type Page = 'home' | 'sessions' | 'watch-profiles' | 'newsletter' | 'sources' | 'email-groups' | 'settings' | 'detail';
 
 const SESSION_EVENT_TYPES = [
   'session_created', 'phase_transition', 'plan_updated',
@@ -121,9 +122,18 @@ function App() {
     return () => subscribers.current.get(sessionId)?.delete(cb);
   }, []);
 
-  // Start a new session stream in the background (no navigation)
-  const handleRunLive = useCallback((payload: SessionLaunchPayload) => {
-    const sessionId = crypto.randomUUID();
+  // Start a new session: pre-create DB record to get a stable ID, navigate to its
+  // detail page immediately, then open the SSE stream so events start flowing.
+  const handleRunLive = useCallback(async (payload: SessionLaunchPayload) => {
+    // Optimistic local ID while the POST is in flight
+    let sessionId: string = crypto.randomUUID();
+    try {
+      const created = await ApiService.createSession(payload);
+      sessionId = created.session_id;
+    } catch {
+      // Fall back to client-generated UUID — stream will still create the record
+    }
+
     const streamUrl = ApiService.getStreamUrl(payload, sessionId);
 
     buffers.current.set(sessionId, []);
@@ -147,7 +157,9 @@ function App() {
       articleCount: 0,
     }));
     setIsModalOpen(false);
-    setCurrentPage('sessions');
+    // Navigate directly to the session detail page with the known ID
+    setSelectedSessionId(sessionId);
+    setCurrentPage('detail');
   }, [emit]);
 
   const handleSessionClick = useCallback((id: string) => {
@@ -227,6 +239,7 @@ function App() {
           </div>
         )}
 
+        {currentPage === 'watch-profiles' && <WatchProfilesPage />}
         {currentPage === 'newsletter' && <NewsletterPage />}
         {currentPage === 'settings' && <SettingsPage />}
         {currentPage === 'email-groups' && <EmailGroupsPage />}

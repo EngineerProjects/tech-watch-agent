@@ -223,18 +223,32 @@ async def lifespan(app: FastAPI):
     except Exception as _exc:
         logger.warning("Stale session cleanup skipped: %s", _exc)
 
-    # Start in-process profile scheduler
-    scheduler_task = asyncio.create_task(_profile_scheduler_loop())
+    # Start persistent APScheduler (falls back silently if apscheduler not installed)
+    from app.scheduler.persistent import get_profile_scheduler
+    profile_scheduler = get_profile_scheduler()
+    try:
+        await profile_scheduler.start()
+    except Exception as _sched_exc:
+        logger.warning("APScheduler init failed, falling back to polling loop: %s", _sched_exc)
+        profile_scheduler = None
+
+    # Fallback polling loop if APScheduler unavailable
+    scheduler_task = None
+    if not (profile_scheduler and profile_scheduler.is_ready):
+        scheduler_task = asyncio.create_task(_profile_scheduler_loop())
 
     yield
 
     # Shutdown
     logger.info("Shutting down tech-watch-agent API")
-    scheduler_task.cancel()
-    try:
-        await scheduler_task
-    except asyncio.CancelledError:
-        pass
+    if profile_scheduler and profile_scheduler.is_ready:
+        await profile_scheduler.stop()
+    if scheduler_task:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
     try:
         await close_db()
     except Exception as exc:

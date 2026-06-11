@@ -151,6 +151,14 @@ export class ApiService {
     });
   }
 
+  static async approveSession(sessionId: string): Promise<void> {
+    await this.request(`/orchestrator/sessions/${sessionId}/approve`, { method: 'POST' });
+  }
+
+  static async rejectSession(sessionId: string): Promise<{ session_id: string; status: string }> {
+    return this.request(`/orchestrator/sessions/${sessionId}/reject`, { method: 'POST' });
+  }
+
   static async getWatchProfiles(activeOnly = false): Promise<WatchProfile[]> {
     return this.request(`/watch-profiles/?active_only=${activeOnly}`);
   }
@@ -310,6 +318,20 @@ export class ApiService {
     return this.request('/config/search/test', {
       method: 'POST',
       body: JSON.stringify({ provider, query }),
+    });
+  }
+
+  static async createSession(payload: SessionLaunchPayload): Promise<{ session_id: string; stream_url: string }> {
+    return this.request('/orchestrator/sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        subject: payload.subject,
+        title: payload.title || undefined,
+        research_instructions: payload.researchInstructions || undefined,
+        topics: payload.topics,
+        send_email: false,
+        autonomous: true,
+      }),
     });
   }
 

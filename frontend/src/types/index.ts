@@ -4,6 +4,7 @@ export const SessionStatus = {
   COMPLETED: 'completed',
   FAILED: 'failed',
   PAUSED: 'paused',
+  AWAITING_APPROVAL: 'awaiting_approval',
 } as const;
 
 export type SessionStatus = (typeof SessionStatus)[keyof typeof SessionStatus];

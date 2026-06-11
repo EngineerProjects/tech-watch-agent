@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LayoutDashboard, Mail, Settings, Zap, History, Search, Command, Shield, Users } from 'lucide-react';
+import { LayoutDashboard, Mail, Settings, Zap, History, Search, Command, Shield, Users, CalendarDays } from 'lucide-react';
 import { ApiService } from '../services/api';
 
 interface SidebarProps {
@@ -9,8 +9,9 @@ interface SidebarProps {
 
 const navItems = [
   { id: 'home',      label: 'Accueil',     icon: LayoutDashboard },
-  { id: 'sessions',  label: 'Sessions',    icon: History },
-  { id: 'newsletter',label: 'Newsletter',  icon: Mail },
+  { id: 'sessions',      label: 'Sessions',  icon: History },
+  { id: 'watch-profiles', label: 'Profils',  icon: CalendarDays },
+  { id: 'newsletter',    label: 'Newsletter', icon: Mail },
   { id: 'sources',   label: 'Sources',     icon: Search },
   { id: 'email-groups', label: 'Email Groups', icon: Users },
   { id: 'settings',  label: 'Paramètres',  icon: Settings },

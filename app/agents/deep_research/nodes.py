@@ -18,6 +18,8 @@ import asyncio
 import re
 from typing import Any, Optional
 
+from langgraph.types import RunnableConfig
+
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -496,7 +498,7 @@ class DeepResearchNodes:
     async def clarify_with_user(
         self,
         state: DeepResearchAgentState,
-        config: Optional[dict] = None,
+        config: Optional[RunnableConfig] = None,
     ) -> dict[str, Any]:
         """Analyze user messages and ask clarifying questions if needed."""
         from langgraph.types import Command
@@ -538,7 +540,7 @@ class DeepResearchNodes:
     async def write_research_brief(
         self,
         state: DeepResearchAgentState,
-        config: Optional[dict] = None,
+        config: Optional[RunnableConfig] = None,
     ) -> dict[str, Any]:
         """Transform user messages into a structured research brief."""
         from langgraph.types import Command
@@ -584,7 +586,7 @@ class DeepResearchNodes:
     async def supervisor(
         self,
         state: SupervisorState,
-        config: Optional[dict] = None,
+        config: Optional[RunnableConfig] = None,
     ) -> dict[str, Any]:
         """Lead research supervisor that plans and delegates research."""
         from langgraph.types import Command
@@ -652,7 +654,7 @@ class DeepResearchNodes:
     async def supervisor_tools(
         self,
         state: SupervisorState,
-        config: Optional[dict] = None,
+        config: Optional[RunnableConfig] = None,
     ) -> dict[str, Any]:
         """Execute supervisor tools (research delegation)."""
         from langgraph.types import Command
@@ -862,7 +864,7 @@ class DeepResearchNodes:
     async def final_report_generation(
         self,
         state: DeepResearchAgentState,
-        config: Optional[dict] = None,
+        config: Optional[RunnableConfig] = None,
     ) -> dict[str, Any]:
         """Generate the final research report."""
         research_brief = state.get("research_brief", "")

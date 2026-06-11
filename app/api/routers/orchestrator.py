@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from typing import Optional
+from app.api.security import require_admin_access
 from app.config.settings import get_settings
 from app.api.models import OrchestratorRequest, OrchestratorResponse
 from app.core.research_brief import build_research_brief, derive_session_title
@@ -134,6 +135,141 @@ async def setup_scheduled_task(
         "schedule_times": schedule_times,
         "mode": "autonomous",
     }
+
+
+@router.post("/sessions", response_model=dict)
+async def create_session(payload: OrchestratorRequest) -> dict:
+    """Create a pending session and return its ID.
+
+    Allows the client to obtain a session_id synchronously, navigate to the
+    session page, then start streaming via GET /orchestrator/stream?session_id={id}.
+    """
+    import uuid as _uuid
+    from app.services.session_manager import create_session as _create_session
+
+    session_uuid = _uuid.uuid4()
+    effective_task = (
+        build_research_brief(payload.subject, payload.topics, payload.research_instructions)
+        if payload.subject
+        else payload.task
+    )
+
+    try:
+        await _create_session(
+            task=effective_task,
+            topics=payload.topics,
+            session_id=session_uuid,
+            meta_data={
+                "title": derive_session_title(title=payload.title, subject=payload.subject, task=effective_task),
+                "subject": payload.subject or derive_session_title(task=effective_task),
+                "research_instructions": payload.research_instructions,
+                "send_email": payload.send_email,
+                "autonomous": payload.autonomous,
+            },
+        )
+    except Exception as exc:
+        logger.warning("Could not pre-create session record: %s", exc)
+
+    return {
+        "session_id": str(session_uuid),
+        "status": "pending",
+        "stream_url": f"/orchestrator/stream?session_id={session_uuid}",
+    }
+
+
+@router.post("/sessions/{session_id}/approve", dependencies=[Depends(require_admin_access)])
+async def approve_session(session_id: str) -> StreamingResponse:
+    """Approve a paused session and resume synthesis + email delivery.
+
+    Re-runs the orchestrator from the analyzer node using the research
+    results already collected and saved in the session checkpoint.
+    """
+    import uuid as _uuid
+    from app.db.base import async_session_factory
+    from app.db.repositories import ResearchSessionRepository
+    from app.services.streaming_service import StreamingOrchestratorService
+
+    try:
+        session_uuid = _uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session ID format")
+
+    async with async_session_factory() as db:
+        repo = ResearchSessionRepository(db)
+        session = await repo.get_by_id(session_uuid)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.status != "awaiting_approval":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Session is not awaiting approval (status: {session.status})"
+            )
+        # Mark approved before resuming so the node routes correctly
+        session.status = "running"
+        await db.commit()
+
+    # Resume: inject pre-loaded research results and force approval bypass
+    research_results = session.research_results or []
+    plan = session.plan or []
+    # Mark all plan steps as done so dispatcher skips them
+    for step in plan:
+        step["status"] = "done"
+
+    service = StreamingOrchestratorService()
+    task = session.research_brief or ""
+    meta = session.meta_data or {}
+
+    return StreamingResponse(
+        service.stream_run(
+            task=task,
+            session_id=session_id,
+            send_email=meta.get("send_email", False),
+            autonomous=True,  # bypass approval on resume
+            subject=meta.get("subject"),
+            title=meta.get("title"),
+            research_instructions=meta.get("research_instructions"),
+            # Pre-loaded state injected via topics (the service will merge)
+            _preloaded_research=research_results,
+            _preloaded_plan=plan,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/sessions/{session_id}/reject", dependencies=[Depends(require_admin_access)])
+async def reject_session(session_id: str) -> dict:
+    """Reject a paused session — marks it as failed so the user can re-run."""
+    import uuid as _uuid
+    from app.db.base import async_session_factory
+    from app.db.repositories import ResearchSessionRepository
+
+    try:
+        session_uuid = _uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid session ID format")
+
+    async with async_session_factory() as db:
+        repo = ResearchSessionRepository(db)
+        session = await repo.get_by_id(session_uuid)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.status != "awaiting_approval":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Session is not awaiting approval (status: {session.status})"
+            )
+        session.status = "failed"
+        meta = dict(session.meta_data or {})
+        meta["rejection_reason"] = "Rejected by user after review"
+        session.meta_data = meta
+        await db.commit()
+
+    return {"session_id": session_id, "status": "rejected"}
 
 
 @router.get("/status", response_model=dict)

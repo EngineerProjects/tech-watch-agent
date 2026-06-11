@@ -7,7 +7,7 @@ import { ApiService } from '../services/api';
 import {
   CheckCircle2, Circle, AlertCircle, Globe, GitBranch,
   Play, MessageCircle, FileText, ExternalLink, Download,
-  ChevronRight, Loader2, Clock,
+  ChevronRight, Loader2, Clock, ThumbsUp, ThumbsDown,
 } from 'lucide-react';
 
 interface SessionDetailPageProps {
@@ -287,6 +287,7 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
     status,
     error: streamError,
     sessionId: streamedSessionId,
+    approvalInfo,
   } = useOrchestratorStream(subscribe ? null : (streamUrl || null), subscribe);
 
   const [activeTab, setActiveTab] = useState<Tab>('report');
@@ -295,6 +296,7 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
   const [loadingSession, setLoadingSession] = useState(false);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+  const [approvalAction, setApprovalAction] = useState<'idle' | 'approving' | 'rejecting' | 'done'>('idle');
 
   // Load session from DB (history view, not when streaming)
   useEffect(() => {
@@ -362,6 +364,35 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
   const effectiveError = streamError ?? (session?.status === 'failed' ? 'La session a échoué.' : null);
   const isStreaming = (!!streamUrl || !!subscribe) && status === 'running';
 
+  const resolvedApprovalId = approvalInfo?.sessionId || session?.id || streamedSessionId;
+  const isAwaitingApproval = effectiveStatus === 'awaiting_approval' || session?.status === 'awaiting_approval';
+
+  const handleApprove = async () => {
+    if (!resolvedApprovalId || approvalAction !== 'idle') return;
+    setApprovalAction('approving');
+    try {
+      await ApiService.approveSession(resolvedApprovalId);
+      setApprovalAction('done');
+    } catch (err: any) {
+      alert(err.message);
+      setApprovalAction('idle');
+    }
+  };
+
+  const handleReject = async () => {
+    if (!resolvedApprovalId || approvalAction !== 'idle') return;
+    if (!confirm('Rejeter cette session ? Elle sera marquée comme échouée.')) return;
+    setApprovalAction('rejecting');
+    try {
+      await ApiService.rejectSession(resolvedApprovalId);
+      setApprovalAction('done');
+      if (session) setSession({ ...session, status: 'failed' });
+    } catch (err: any) {
+      alert(err.message);
+      setApprovalAction('idle');
+    }
+  };
+
   // Source filter counts
   const filterCounts = useMemo(() => ({
     all: allSources.length,
@@ -398,6 +429,11 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
           {effectiveError && (
             <div style={{ fontSize: '0.78rem', color: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)', padding: '4px 14px', borderRadius: '20px' }}>
               {effectiveError}
+            </div>
+          )}
+          {isAwaitingApproval && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.12)', padding: '4px 14px', borderRadius: '20px', border: '1px solid rgba(245,158,11,0.3)' }}>
+              <Clock size={13} /> Validation requise
             </div>
           )}
           {finalReport && (
@@ -465,6 +501,40 @@ export const SessionDetailPage: React.FC<SessionDetailPageProps> = ({ streamUrl,
               </button>
             ))}
           </nav>
+
+          {/* ── Human approval banner ── */}
+          {isAwaitingApproval && approvalAction !== 'done' && (
+            <div style={{ margin: '20px 40px 0', padding: '20px 24px', borderRadius: '12px', border: '1px solid rgba(245,158,11,0.35)', backgroundColor: 'rgba(245,158,11,0.07)', display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 600, color: '#f59e0b', marginBottom: '4px', fontSize: '0.92rem' }}>Validation manuelle requise</p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.83rem', lineHeight: 1.5 }}>
+                  {approvalInfo?.message ?? `La recherche est terminée — ${approvalInfo?.researchCount ?? 0} sources collectées (score qualité : ${((approvalInfo?.qualityScore ?? 0) * 100).toFixed(0)} %).`}
+                  {' '}Approuvez pour lancer la synthèse, ou rejetez pour annuler.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '10px', flexShrink: 0 }}>
+                <button
+                  onClick={handleApprove}
+                  disabled={approvalAction !== 'idle'}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 18px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, backgroundColor: '#22c55e', color: '#fff', opacity: approvalAction !== 'idle' ? 0.6 : 1, cursor: approvalAction !== 'idle' ? 'not-allowed' : 'pointer' }}
+                >
+                  <ThumbsUp size={14} /> {approvalAction === 'approving' ? 'En cours…' : 'Approuver'}
+                </button>
+                <button
+                  onClick={handleReject}
+                  disabled={approvalAction !== 'idle'}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 18px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, backgroundColor: 'rgba(239,68,68,0.12)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', opacity: approvalAction !== 'idle' ? 0.6 : 1, cursor: approvalAction !== 'idle' ? 'not-allowed' : 'pointer' }}
+                >
+                  <ThumbsDown size={14} /> {approvalAction === 'rejecting' ? 'En cours…' : 'Rejeter'}
+                </button>
+              </div>
+            </div>
+          )}
+          {isAwaitingApproval && approvalAction === 'done' && (
+            <div style={{ margin: '20px 40px 0', padding: '14px 24px', borderRadius: '12px', backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', color: '#22c55e', fontSize: '0.85rem', fontWeight: 500 }}>
+              Action enregistrée — la session va reprendre.
+            </div>
+          )}
 
           <div style={{ flex: 1, padding: '40px', overflowY: 'auto' }}>
             <article className="markdown-report" style={{ maxWidth: '820px', margin: '0 auto', paddingBottom: '80px' }}>

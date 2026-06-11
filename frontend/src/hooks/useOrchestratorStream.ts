@@ -20,6 +20,13 @@ export interface StepResult {
 
 export interface BusEvent { type: string; data: any }
 
+export interface ApprovalInfo {
+  sessionId: string;
+  researchCount: number;
+  qualityScore: number;
+  message: string;
+}
+
 /**
  * Subscribe function type: caller provides a callback and receives an unsubscribe fn.
  * Used to connect to a shared EventSource managed by App.tsx instead of opening a new one.
@@ -35,9 +42,10 @@ export const useOrchestratorStream = (
   const [articles, setArticles] = useState<StreamArticle[]>([]);
   const [stepResults, setStepResults] = useState<Record<string, StepResult>>({});
   const [phase, setPhase] = useState('idle');
-  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'failed'>('idle');
+  const [status, setStatus] = useState<'idle' | 'running' | 'completed' | 'failed' | 'awaiting_approval'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [approvalInfo, setApprovalInfo] = useState<ApprovalInfo | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
@@ -47,8 +55,8 @@ export const useOrchestratorStream = (
     setStepResults({});
     setError(null);
     setSessionId(null);
+    setApprovalInfo(null);
 
-    // Only mark as running when actually connected to a stream
     if (url || subscribe) {
       setPhase('initializing');
       setStatus('running');
@@ -91,10 +99,18 @@ export const useOrchestratorStream = (
         setError(data.error ?? 'Erreur inconnue');
         setStatus('failed');
         setPhase('failed');
+      } else if (type === 'approval_required') {
+        setStatus('awaiting_approval');
+        setPhase('awaiting_approval');
+        setApprovalInfo({
+          sessionId: data.session_id ?? '',
+          researchCount: data.research_count ?? 0,
+          qualityScore: data.quality_score ?? 0,
+          message: data.message ?? 'En attente de validation',
+        });
       }
     };
 
-    // Subscribe mode: use the shared event bus from App.tsx
     if (subscribe) {
       const unsubscribe = subscribe((evt) => {
         try { handleEvent(evt.type, evt.data); } catch { /* noop */ }
@@ -104,14 +120,13 @@ export const useOrchestratorStream = (
 
     if (!url) return;
 
-    // Normal mode: open a dedicated EventSource
     const es = new EventSource(url);
     esRef.current = es;
 
     const EVENT_TYPES = [
       'session_created', 'phase_transition', 'plan_updated',
       'research_result', 'report_chunk', 'report_completed',
-      'session_completed', 'session_failed',
+      'session_completed', 'session_failed', 'approval_required',
     ] as const;
 
     for (const type of EVENT_TYPES) {
@@ -132,5 +147,5 @@ export const useOrchestratorStream = (
     };
   }, [url, subscribe]);
 
-  return { report, plan, articles, stepResults, phase, status, error, sessionId };
+  return { report, plan, articles, stepResults, phase, status, error, sessionId, approvalInfo };
 };
