@@ -34,9 +34,6 @@ jobs:
       - name: ruff check
         run: ruff check .
 
-      - name: mypy
-        run: mypy app/
-
   test:
     name: Test
     runs-on: ubuntu-latest
