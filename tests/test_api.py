@@ -132,8 +132,8 @@ class TestToolEndpoints:
 
     @pytest.fixture
     def app(self):
-        """Create test application."""
-        return create_app()
+        """Create test application with auth disabled (empty token, dev env)."""
+        return create_app(Settings(admin_api_token=""))
 
     @pytest.fixture
     def client(self, app):
@@ -153,7 +153,6 @@ class TestToolEndpoints:
         response = client.post(
             "/tools/execute",
             json={"tool_name": "nonexistent_tool", "params": {}},
-            headers={"X-Admin-Token": "change-me"},
         )
         assert response.status_code in [404, 500]
 
