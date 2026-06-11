@@ -69,6 +69,36 @@ async def _finalize_session(
             await manager.close()
 
 
+async def _pause_session_for_approval(session_uuid: uuid.UUID, state: dict) -> None:
+    """Persist research state and mark session as awaiting human approval."""
+    manager = None
+    try:
+        from app.services.session_manager import SessionManager, SessionPhase
+        manager = SessionManager(session_uuid)
+        await manager.initialize()
+        if manager.session is None:
+            return
+        # Save a checkpoint so the state can be resumed after approval
+        await manager.create_checkpoint(
+            phase=SessionPhase.COLLECTION,
+            state_snapshot=state,
+            articles=state.get("articles", []),
+            results=state.get("research_results", []),
+        )
+        # Mark session as awaiting_approval
+        await manager.update_session(
+            status="awaiting_approval",
+            research_results=state.get("research_results", []),
+        )
+        logger.info("Session %s paused for human approval (%d results)",
+                    session_uuid, len(state.get("research_results", [])))
+    except Exception as exc:
+        logger.warning("Could not pause session %s for approval: %s", session_uuid, exc)
+    finally:
+        if manager is not None:
+            await manager.close()
+
+
 async def cleanup_stale_running_sessions(max_age_hours: int = 3) -> int:
     """Mark sessions stuck in 'running' state for too long as 'failed'.
 
@@ -124,6 +154,8 @@ class StreamingOrchestratorService:
         subject: Optional[str] = None,
         title: Optional[str] = None,
         research_instructions: Optional[str] = None,
+        _preloaded_research: Optional[list] = None,
+        _preloaded_plan: Optional[list] = None,
     ) -> AsyncGenerator[str, None]:
         """Run the orchestrator and yield SSE-formatted events.
 
@@ -177,10 +209,10 @@ class StreamingOrchestratorService:
             "topics": topics or [],
             "send_email": send_email,
             "metadata": {"topics": topics or [], "subject": subject, "research_instructions": research_instructions, "title": derive_session_title(title=title, subject=subject, task=task)},
-            "plan": [],
-            "current_step_index": 0,
+            "plan": _preloaded_plan or [],
+            "current_step_index": len(_preloaded_plan) if _preloaded_plan else 0,
             "articles": [],
-            "research_results": [],
+            "research_results": _preloaded_research or [],
             "analysis_results": "",
             "synthesis_result": "",
             "final_report": "",
@@ -189,6 +221,7 @@ class StreamingOrchestratorService:
             "iteration_count": 0,
             "max_iterations": 5,
             "autonomous": autonomous,
+            "approval_result": "approved" if _preloaded_research else "",
         }
 
         # Yield the first event synchronously before entering the queue loop
@@ -291,7 +324,21 @@ class StreamingOrchestratorService:
 
                 final_report = final_state.get("final_report")
                 errors = final_state.get("errors")
-                if isinstance(final_report, str) and final_report.strip():
+                approval_result = final_state.get("approval_result")
+
+                if approval_result == "awaiting_approval":
+                    # Interactive mode: save research state and pause for user review
+                    await _pause_session_for_approval(session_uuid, final_state)
+                    research_count = len(final_state.get("research_results", []))
+                    quality = final_state.get("quality_score", 0.0)
+                    await queue.put(self._format_sse("approval_required", {
+                        "session_id": session_id,
+                        "research_count": research_count,
+                        "quality_score": quality,
+                        "message": f"{research_count} sources collectées — en attente de validation avant synthèse",
+                        "timestamp": datetime.now().isoformat()
+                    }))
+                elif isinstance(final_report, str) and final_report.strip():
                     await _finalize_session(session_uuid, "completed", final_report=final_report)
                     await queue.put(self._format_sse("session_completed", {
                         "session_id": session_id,

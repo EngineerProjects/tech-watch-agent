@@ -8,6 +8,7 @@ import { NewsletterPage } from './pages/NewsletterPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SourcesPage } from './pages/SourcesPage';
 import { EmailGroupsPage } from './pages/EmailGroupsPage';
+import { WatchProfilesPage } from './pages/WatchProfilesPage';
 import { LiveRunModal } from './components/LiveRunModal';
 import { ApiService } from './services/api';
 import type { ActiveSessionInfo, ResearchSession, SessionLaunchPayload } from './types';
@@ -46,7 +47,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-type Page = 'home' | 'sessions' | 'newsletter' | 'sources' | 'email-groups' | 'settings' | 'detail';
+type Page = 'home' | 'sessions' | 'watch-profiles' | 'newsletter' | 'sources' | 'email-groups' | 'settings' | 'detail';
 
 const SESSION_EVENT_TYPES = [
   'session_created', 'phase_transition', 'plan_updated',
@@ -227,6 +228,7 @@ function App() {
           </div>
         )}
 
+        {currentPage === 'watch-profiles' && <WatchProfilesPage />}
         {currentPage === 'newsletter' && <NewsletterPage />}
         {currentPage === 'settings' && <SettingsPage />}
         {currentPage === 'email-groups' && <EmailGroupsPage />}

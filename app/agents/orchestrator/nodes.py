@@ -1414,25 +1414,35 @@ Rules:
     async def human_approval(self, state: OrchestratorState) -> OrchestratorState:
         """Human-in-the-loop approval checkpoint.
 
-        This node pauses execution and waits for human approval.
-        In a real implementation, this would use LangGraph's interrupt
-        mechanism or a message queue to pause and wait for user input.
-
-        For now, it automatically approves if quality score is above threshold.
+        In autonomous mode: auto-approves if quality >= threshold.
+        In interactive mode (autonomous=False): pauses the graph when quality
+        is below threshold so the user can review research results before synthesis.
+        The streaming service detects approval_result="awaiting_approval" and
+        emits an `approval_required` SSE event, then saves session state.
         """
         quality_score = state.get("quality_score", 0.0)
         approval_threshold = state.get("approval_threshold", 0.7)
-
-        state["approval_status"] = "auto_approved" if quality_score >= approval_threshold else "needs_review"
+        autonomous = state.get("autonomous", True)
 
         if quality_score >= approval_threshold:
             logger.info("Auto-approved: quality %.2f >= threshold %.2f", quality_score, approval_threshold)
             state["approval_result"] = "approved"
+            state["approval_status"] = "auto_approved"
+            state["approved_at"] = datetime.now().isoformat()
+        elif autonomous:
+            # Autonomous mode: bypass regardless of quality
+            logger.warning("Bypassing approval in autonomous mode (quality %.2f < %.2f)",
+                           quality_score, approval_threshold)
+            state["approval_result"] = "approved"
+            state["approval_status"] = "auto_approved_autonomous"
+            state["approved_at"] = datetime.now().isoformat()
         else:
-            logger.warning("Needs review: quality %.2f < threshold %.2f", quality_score, approval_threshold)
-            state["approval_result"] = "pending"
-
-        state["approved_at"] = datetime.now().isoformat() if quality_score >= approval_threshold else None
+            # Interactive mode + low quality: pause for human review
+            logger.info("Interactive mode: pausing for human approval (quality %.2f < %.2f)",
+                        quality_score, approval_threshold)
+            state["approval_result"] = "awaiting_approval"
+            state["approval_status"] = "needs_review"
+            state["approved_at"] = None
 
         return state
 

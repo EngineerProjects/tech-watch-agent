@@ -151,6 +151,14 @@ export class ApiService {
     });
   }
 
+  static async approveSession(sessionId: string): Promise<void> {
+    await this.request(`/orchestrator/sessions/${sessionId}/approve`, { method: 'POST' });
+  }
+
+  static async rejectSession(sessionId: string): Promise<{ session_id: string; status: string }> {
+    return this.request(`/orchestrator/sessions/${sessionId}/reject`, { method: 'POST' });
+  }
+
   static async getWatchProfiles(activeOnly = false): Promise<WatchProfile[]> {
     return this.request(`/watch-profiles/?active_only=${activeOnly}`);
   }
