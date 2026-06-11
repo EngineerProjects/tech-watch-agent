@@ -89,6 +89,16 @@ on specific repositories, or discover trending code in any topic."""
             "required": ["action"],
         }
 
+    def validate_params(self, params: dict[str, Any]) -> tuple[bool, Optional[str]]:
+        is_valid, error = super().validate_params(params)
+        if not is_valid:
+            return is_valid, error
+        action = params.get("action")
+        if action in ("recent_commits", "issues", "repo_info"):
+            if not params.get("repo"):
+                return False, f"Missing required parameter: repo (required for {action})"
+        return True, None
+
     async def execute(self, params: dict[str, Any]) -> ToolResult:
         """Execute GitHub monitoring action.
 

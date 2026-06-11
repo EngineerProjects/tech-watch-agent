@@ -1,6 +1,11 @@
 import httpx
 import asyncio
 
+import pytest
+
+
+@pytest.mark.skip(reason="requires a running Ollama service — dev/manual use only")
+@pytest.mark.asyncio
 async def test_ollama():
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

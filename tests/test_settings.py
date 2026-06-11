@@ -11,6 +11,7 @@ def test_settings_parse_lists_from_env_file(tmp_path: Path) -> None:
     os.environ.pop("NEWSLETTER_TOPICS", None)
     os.environ.pop("RECIPIENT_EMAILS", None)
     os.environ.pop("SCHEDULE_TIMES", None)
+    os.environ.pop("LLM_API_KEY", None)
 
     env_file = tmp_path / ".env"
     env_file.write_text(
