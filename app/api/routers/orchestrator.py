@@ -137,6 +137,46 @@ async def setup_scheduled_task(
     }
 
 
+@router.post("/sessions", response_model=dict)
+async def create_session(payload: OrchestratorRequest) -> dict:
+    """Create a pending session and return its ID.
+
+    Allows the client to obtain a session_id synchronously, navigate to the
+    session page, then start streaming via GET /orchestrator/stream?session_id={id}.
+    """
+    import uuid as _uuid
+    from app.services.session_manager import create_session as _create_session
+
+    session_uuid = _uuid.uuid4()
+    effective_task = (
+        build_research_brief(payload.subject, payload.topics, payload.research_instructions)
+        if payload.subject
+        else payload.task
+    )
+
+    try:
+        await _create_session(
+            task=effective_task,
+            topics=payload.topics,
+            session_id=session_uuid,
+            meta_data={
+                "title": derive_session_title(title=payload.title, subject=payload.subject, task=effective_task),
+                "subject": payload.subject or derive_session_title(task=effective_task),
+                "research_instructions": payload.research_instructions,
+                "send_email": payload.send_email,
+                "autonomous": payload.autonomous,
+            },
+        )
+    except Exception as exc:
+        logger.warning("Could not pre-create session record: %s", exc)
+
+    return {
+        "session_id": str(session_uuid),
+        "status": "pending",
+        "stream_url": f"/orchestrator/stream?session_id={session_uuid}",
+    }
+
+
 @router.post("/sessions/{session_id}/approve", dependencies=[Depends(require_admin_access)])
 async def approve_session(session_id: str) -> StreamingResponse:
     """Approve a paused session and resume synthesis + email delivery.

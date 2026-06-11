@@ -321,6 +321,20 @@ export class ApiService {
     });
   }
 
+  static async createSession(payload: SessionLaunchPayload): Promise<{ session_id: string; stream_url: string }> {
+    return this.request('/orchestrator/sessions', {
+      method: 'POST',
+      body: JSON.stringify({
+        subject: payload.subject,
+        title: payload.title || undefined,
+        research_instructions: payload.researchInstructions || undefined,
+        topics: payload.topics,
+        send_email: false,
+        autonomous: true,
+      }),
+    });
+  }
+
   static getStreamUrl(payload: SessionLaunchPayload, sessionId?: string): string {
     const params = new URLSearchParams({ subject: payload.subject });
     if (payload.title) params.set('title', payload.title);

@@ -1,4 +1,4 @@
-from types import SimpleNamespace
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,23 +10,21 @@ from app.api.routers.newsletter import generate_newsletter
 
 
 @pytest.mark.asyncio
-async def test_generate_newsletter_uses_shared_delivery_service():
+async def test_generate_newsletter_uses_orchestrator():
     mock_agent = MagicMock()
     mock_agent.execute = AsyncMock(
         return_value=AgentResult.create_success(
             output={
-                "newsletter": "# AI Watch\n\nLatest updates",
-                "subject": "AI Watch",
+                "report": "# AI Watch\n\nLatest updates",
+                "email_sent": True,
+                "research_results": [{"step_id": "s1"}, {"step_id": "s2"}, {"step_id": "s3"}],
             },
             metadata={"article_count": 3},
+            session_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
         )
     )
-    delivery_result = SimpleNamespace(sent=True, message="Email sent: True")
 
-    with patch("app.api.routers.newsletter.create_newsletter_agent", return_value=mock_agent), \
-         patch("app.api.routers.newsletter.ReportDeliveryService") as delivery_service_cls:
-        delivery_service_cls.return_value.deliver.return_value = delivery_result
-
+    with patch("app.agents.orchestrator.agent.OrchestratorAgent", return_value=mock_agent):
         response = await generate_newsletter(
             NewsletterGenerateRequest(topics=["AI"], send_email=True),
             BackgroundTasks(),
@@ -34,9 +32,5 @@ async def test_generate_newsletter_uses_shared_delivery_service():
 
     assert response.article_count == 3
     assert response.email_sent is True
-    assert response.delivery_message == "Email sent: True"
-    delivery_service_cls.return_value.deliver.assert_called_once_with(
-        report="# AI Watch\n\nLatest updates",
-        subject="AI Watch",
-        send=True,
-    )
+    assert response.subject == "AI Watch"
+    assert "AI Watch" in response.preview

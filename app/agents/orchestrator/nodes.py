@@ -597,11 +597,29 @@ class OrchestratorNodes:
         if isinstance(watch_ctx, dict):
             watch_ctx = WatchContext(**watch_ctx)
 
-        import random
         from datetime import datetime as _dt
-        # Add a per-session seed so the LLM generates different plans across runs
         session_seed = state.get("session_id", "")[-6:] if state.get("session_id") else ""
         run_ts = _dt.now().strftime("%H:%M:%S")
+
+        # Inject vector memory context so the planner avoids repeating past research
+        memory_block = ""
+        try:
+            from app.tools.memory.search_memory import SearchMemoryTool
+            _mem = SearchMemoryTool()
+            _mem_result = await _mem.execute({"query": task, "top_k": 8, "min_score": 0.25})
+            if _mem_result.get("success"):
+                _recent = _mem_result.get("data", {}).get("results", [])
+                if _recent:
+                    _covered_topics = list({r.get("topic", "") for r in _recent if r.get("topic")})
+                    _titles = [r["title"] for r in _recent[:6] if r.get("title")]
+                    memory_block = "\n\n## Previously researched (avoid repeating)\n"
+                    if _covered_topics:
+                        memory_block += f"Topics already covered: {', '.join(_covered_topics[:6])}\n"
+                    memory_block += "Recent articles already in memory:\n"
+                    memory_block += "\n".join(f"- {t}" for t in _titles)
+                    memory_block += "\nFocus on NEW angles, sources, and developments not yet covered."
+        except Exception as _mem_exc:
+            logger.debug("Planner memory fetch failed (non-blocking): %s", _mem_exc)
 
         prompt = PLANNER_USER.format(
             task=task,
@@ -613,7 +631,7 @@ class OrchestratorNodes:
             current_month=watch_ctx.month_name,
             topic=", ".join(topics) if isinstance(topics, list) else str(topics),
         )
-        # Append a uniqueness hint so repeated tasks yield different plans
+        prompt += memory_block
         prompt += f"\n\n[session={session_seed} ts={run_ts} vary_approach=true]"
 
         try:
