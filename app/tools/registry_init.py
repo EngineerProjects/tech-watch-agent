@@ -18,7 +18,7 @@ def initialize_tools() -> None:
     This function should be called at application startup
     to make all tools available in the registry.
     """
-    registry = get_global_registry()
+    get_global_registry()
     tools_registered = 0
     
     # Web Search Tools

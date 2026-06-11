@@ -322,7 +322,7 @@ on specific repositories, or discover trending code in any topic."""
                 "number": i["number"],
                 "title": i["title"],
                 "state": i["state"],
-                "labels": [l["name"] for l in i.get("labels", [])],
+                "labels": [lbl["name"] for lbl in i.get("labels", [])],
                 "author": i["user"]["login"],
                 "created": i["created_at"],
                 "url": i["html_url"],

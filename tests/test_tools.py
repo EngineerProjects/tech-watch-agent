@@ -365,7 +365,7 @@ class TestGlobalRegistry:
             async def execute(self, params: dict) -> ToolResult:
                 return {"success": True, "data": None, "error": None, "metadata": {}}
 
-        decorated_tool = register_tool(TestTool())
+        register_tool(TestTool())
 
         # Tool should be registered
         assert registry.count >= initial_count

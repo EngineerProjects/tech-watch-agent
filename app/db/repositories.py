@@ -255,7 +255,7 @@ class NewsletterRunRepository:
         query = select(
             func.count(NewsletterRun.id).label("total_runs"),
             func.sum(
-                func.case((NewsletterRun.delivery_success == True, 1), else_=0)
+                func.case((NewsletterRun.delivery_success == True, 1), else_=0)  # noqa: E712
             ).label("successful_deliveries"),
             func.avg(NewsletterRun.execution_time_seconds).label("avg_execution_time"),
         ).where(NewsletterRun.started_at >= cutoff_date)
@@ -339,7 +339,7 @@ class UserTopicRepository:
             select(UserTopic).where(
                 and_(
                     UserTopic.user_id == user_id,
-                    UserTopic.is_active == True,
+                    UserTopic.is_active == True,  # noqa: E712
                 )
             )
         )
@@ -468,7 +468,7 @@ class ResearchSessionRepository:
             .where(
                 and_(
                     SessionCheckpoint.session_id == session_id,
-                    SessionCheckpoint.is_latest == True,
+                    SessionCheckpoint.is_latest == True,  # noqa: E712
                 )
             )
             .order_by(SessionCheckpoint.created_at.desc())

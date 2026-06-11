@@ -237,7 +237,7 @@ class OrchestratorWorkflow:
     def __init__(self, nodes: Optional[OrchestratorNodes] = None, checkpointer=None) -> None:
         self.nodes = nodes or OrchestratorNodes()
         self.graph_builder = OrchestratorGraphBuilder(nodes=self.nodes)
-        self._graph = self.graph_builder.build(checkpointer=checkpointer)
+        self._graph = self.graph_builder.build()
 
     def run(self, task: str, topics: Optional[list[str]] = None) -> OrchestratorState:
         """Execute the orchestrator workflow.

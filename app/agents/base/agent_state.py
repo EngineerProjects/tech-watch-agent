@@ -240,5 +240,6 @@ def override_reducer(
 list_reducer = add
 """Default reducer for list fields - accumulates items."""
 
-str_reducer = lambda c, n: (c or "") + (n or "")
+def str_reducer(c: str | None, n: str | None) -> str:
+    return (c or "") + (n or "")
 """Reducer for string fields - concatenates strings."""

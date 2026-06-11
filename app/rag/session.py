@@ -159,7 +159,7 @@ class SessionManager:
             select(UserSession).where(
                 and_(
                     UserSession.user_id == user_id,
-                    UserSession.is_active == True,
+                    UserSession.is_active == True,  # noqa: E712
                 )
             )
         )
@@ -287,7 +287,7 @@ class SessionManager:
         await self.session.flush()
         return True
 
-    def _db_to_session(self, db_session: "UserSession") -> Session:
+    def _db_to_session(self, db_session: "UserSession") -> Session:  # noqa: F821
         """Convert database model to Session object.
 
         Args:

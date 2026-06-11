@@ -17,7 +17,6 @@ async def list_articles(
 ) -> list[ArticleResponse]:
     """List articles with optional filters."""
     topic_list = topics.split(",") if topics else None
-    source_list = sources.split(",") if sources else None
 
     async with async_session_factory() as session:
         repo = ArticleRepository(session)

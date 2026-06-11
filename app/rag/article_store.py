@@ -407,7 +407,7 @@ class ArticleStore:
         logger.info("Deleted %d old articles (older than %d days)", count, days)
         return count
 
-    def _db_to_article(self, db_article: "DBArticle") -> CoreArticle:
+    def _db_to_article(self, db_article: "DBArticle") -> CoreArticle:  # noqa: F821
         """Convert database article to core Article model.
 
         Args:

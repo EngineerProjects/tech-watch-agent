@@ -21,7 +21,7 @@ async def main():
     
     query = "Analyze the competitive landscape of decentralized AI infrastructure in 2026, focusing on Bittensor, Ritual, and Morpheus."
     
-    print(f"\nStarting Orchestrator with Deep Research...")
+    print("\nStarting Orchestrator with Deep Research...")
     print(f"Query: '{query}'")
     print("="*60)
     

@@ -12,6 +12,7 @@ operations and coordinates between different components.
 from typing import Any, Optional, Sequence
 import uuid
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger

@@ -424,7 +424,7 @@ ARXIV_CATEGORIES = {
     "cs.CV": "Computer Vision and Pattern Recognition",
     "cs.NE": "Neural and Evolutionary Computing",
     "cs.RO": "Robotics",
-    "cs.CL": "Computational Complexity",
+    "cs.CC": "Computational Complexity",
     "stat.ML": "Machine Learning (Statistics)",
     "math.ST": "Statistics Theory",
     "q-bio": "Quantitative Biology",

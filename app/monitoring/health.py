@@ -340,7 +340,7 @@ async def check_agents_health() -> ComponentHealth:
         # Check newsletter agent
         try:
             from app.agents.newsletter.agent import create_newsletter_agent
-            agent = create_newsletter_agent(settings)
+            create_newsletter_agent(settings)
             agent_status["newsletter"] = True
         except Exception as exc:
             agent_status["newsletter"] = False
@@ -349,7 +349,7 @@ async def check_agents_health() -> ComponentHealth:
         # Check deep research agent
         try:
             from app.agents.deep_research.agent import create_deep_research_agent
-            agent = create_deep_research_agent(settings=settings)
+            create_deep_research_agent(settings=settings)
             agent_status["deep_research"] = True
         except Exception as exc:
             agent_status["deep_research"] = False

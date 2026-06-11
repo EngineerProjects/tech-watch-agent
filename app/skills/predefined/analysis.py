@@ -70,7 +70,8 @@ Format as structured JSON with: insights[], trends[], claims[], contradictions[]
                 max_tokens=3000,
             )
 
-            import json, re
+            import json
+            import re
             text = response.strip()
             if text.startswith("```"):
                 text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -151,7 +152,8 @@ Format as JSON with: agreements[], contradictions[], complements[], gaps[]"""
                 max_tokens=3000,
             )
 
-            import json, re
+            import json
+            import re
             text = response.strip()
             if text.startswith("```"):
                 text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -231,7 +233,8 @@ Format as JSON with: emerging_trends[], stable_topics[], declining_topics[], pre
                 max_tokens=3000,
             )
 
-            import json, re
+            import json
+            import re
             text = response.strip()
             if text.startswith("```"):
                 text = re.sub(r"^```(?:json)?\s*", "", text)

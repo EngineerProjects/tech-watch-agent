@@ -1319,7 +1319,7 @@ Rules:
     def _extract_articles_from_results(
         self,
         research_results: list[dict],
-    ) -> list[Article]:
+    ) -> list[Article]:  # noqa: F821
         """Convert orchestrator research results into Article objects.
 
         Args:
@@ -1654,7 +1654,6 @@ Rules:
     async def emailer(self, state: OrchestratorState) -> OrchestratorState:
         """Send the final report via email."""
         report = state.get("final_report", "")
-        task = state.get("task", "")
 
         if not report:
             state["errors"] = state.get("errors", []) + ["No report to send"]

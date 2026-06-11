@@ -89,14 +89,6 @@ async def get_config() -> dict[str, Any]:
     """Return current effective settings. Sensitive values are masked."""
     s = get_settings()
 
-    try:
-        async with async_session_factory() as db:
-            saved_raw = await AppConfigRepository(db).get_all()
-        # Decrypt DB overrides to read the actual saved values for derived fields
-        saved = decrypt_overrides(saved_raw)
-    except Exception:
-        saved = {}
-
     raw: dict[str, Any] = {
         "llm_provider":     s.llm_provider,
         "llm_api_key":      s.llm_api_key,

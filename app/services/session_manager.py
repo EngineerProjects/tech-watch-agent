@@ -406,7 +406,7 @@ class SessionManager:
                 select(SessionCheckpoint)
                 .where(
                     SessionCheckpoint.session_id == self.session_id,
-                    SessionCheckpoint.is_latest == True,
+                    SessionCheckpoint.is_latest == True,  # noqa: E712
                 )
                 .order_by(SessionCheckpoint.created_at.desc())
                 .limit(1)
