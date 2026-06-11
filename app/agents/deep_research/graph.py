@@ -65,7 +65,7 @@ class DeepResearchGraphBuilder:
         # Build the main agent graph
         main_graph = StateGraph(
             DeepResearchAgentState,
-            config_schema=DeepResearchConfig,
+            context_schema=DeepResearchConfig,
         )
 
         # Add main workflow nodes
@@ -98,7 +98,7 @@ class DeepResearchGraphBuilder:
         """
         supervisor_graph = StateGraph(
             SupervisorState,
-            config_schema=DeepResearchConfig,
+            context_schema=DeepResearchConfig,
         )
 
         supervisor_graph.add_node("supervisor", self.nodes.supervisor)

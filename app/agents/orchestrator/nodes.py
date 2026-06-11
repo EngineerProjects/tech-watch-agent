@@ -48,6 +48,7 @@ from app.agents.orchestrator.prompts import (
     SYNTHESIZER_SYSTEM,
     EMAILER_USER,
 )
+from langgraph.types import RunnableConfig
 from app.services.llm import ChatCompletionClient
 from app.services.llm.health import LLMHealthManager, get_health_manager
 from app.tools.registry import get_global_registry
@@ -1104,10 +1105,41 @@ Rules:
                 data.setdefault("source", tool)
                 all_articles_data.append(data)
 
+        # 1b. Inter-session deduplication: separate fresh articles from already-known ones.
+        # Fresh articles (not yet in the Article table) are ranked first; known ones are
+        # appended as fallback so the session is never empty if all results are familiar.
+        fresh_articles_data = all_articles_data
+        known_articles_data: list[dict] = []
+        candidate_urls = [a.get("url", "") for a in all_articles_data if a.get("url")]
+        if candidate_urls:
+            try:
+                from sqlalchemy import select
+                from app.db.base import get_db_context
+                from app.db.models import Article as _ArticleDB
+                async with get_db_context() as _db:
+                    rows = await _db.execute(
+                        select(_ArticleDB.url).where(_ArticleDB.url.in_(candidate_urls))
+                    )
+                    known_urls: set[str] = {r[0] for r in rows}
+                fresh_articles_data = [a for a in all_articles_data if a.get("url") not in known_urls]
+                known_articles_data = [a for a in all_articles_data if a.get("url") in known_urls]
+                if fresh_articles_data:
+                    logger.info(
+                        "Collector dedup: %d new, %d already seen (suppressed)",
+                        len(fresh_articles_data), len(known_articles_data),
+                    )
+                else:
+                    # Nothing new — fall back to all articles to avoid empty synthesis
+                    fresh_articles_data = all_articles_data
+                    known_articles_data = []
+                    logger.info("Collector dedup: all %d articles already seen, keeping all", len(all_articles_data))
+            except Exception as _dedup_exc:
+                logger.debug("Inter-session dedup skipped (non-blocking): %s", _dedup_exc)
+
         # 2. Convert to Article objects for ranking
         from app.core.models import Article as ArticleModel
         articles_to_rank = []
-        for a in all_articles_data:
+        for a in fresh_articles_data:
             articles_to_rank.append(ArticleModel(
                 title=a.get("title", a.get("name", "")),
                 summary=a.get("summary", a.get("description", "")),
@@ -1532,7 +1564,7 @@ Rules:
 
         return state
 
-    async def synthesizer(self, state: OrchestratorState, config: Optional[dict] = None) -> OrchestratorState:
+    async def synthesizer(self, state: OrchestratorState, config: Optional[RunnableConfig] = None) -> OrchestratorState:
         """Create the final comprehensive report.
 
         Also stores the report in ResearchSession for future reference.
