@@ -5,10 +5,11 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-Orchestration-121212)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-336791?logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![CI](https://github.com/EngineerProjects/tech-watch-agent/actions/workflows/ci-python.yml/badge.svg)
 
-Plateforme de veille technologique multi-agents: planification, collecte multi-source, synthèse, stockage persistant et livraison email pilotée par profils.
+Plateforme de veille technologique multi-agents : planification intelligente, collecte multi-source, synthèse structurée, déduplication inter-sessions, livraison email par profils programmés.
 
-![Architecture cible](docs/captures/image.png)
+![Architecture](docs/captures/image.png)
 
 ---
 
@@ -16,12 +17,12 @@ Plateforme de veille technologique multi-agents: planification, collecte multi-s
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/cibles/Accueil.png" alt="Cible Accueil" /></td>
-    <td width="50%"><img src="docs/cibles/Sessions.png" alt="Cible Sessions" /></td>
+    <td width="50%"><img src="docs/cibles/Accueil.png" alt="Accueil" /></td>
+    <td width="50%"><img src="docs/cibles/Sessions.png" alt="Sessions" /></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/cibles/Session_en_cours.png" alt="Cible Session en cours" /></td>
-    <td width="50%"><img src="docs/cibles/Newsletter.png" alt="Cible Newsletter" /></td>
+    <td width="50%"><img src="docs/cibles/Session_en_cours.png" alt="Session en cours" /></td>
+    <td width="50%"><img src="docs/cibles/Newsletter.png" alt="Newsletter" /></td>
   </tr>
 </table>
 
@@ -29,33 +30,52 @@ Plateforme de veille technologique multi-agents: planification, collecte multi-s
 
 ## Vue d'ensemble
 
-`tech-watch-agent` orchestre un pipeline de veille complet:
+`tech-watch-agent` orchestre un pipeline de veille complet :
 
-- définition d'une tâche ou d'un profil récurrent,
-- génération d'un plan de recherche,
+- définition de tâches ad hoc ou de profils récurrents,
+- génération d'un plan de recherche enrichi par la mémoire des sessions passées,
 - exécution parallèle d'outils web, académiques et code,
+- déduplication des articles déjà connus entre sessions,
 - synthèse d'un rapport structuré,
-- persistance des sessions, sources, steps et mémoire vectorielle,
-- livraison optionnelle par email.
-
-Le produit expose deux surfaces:
-
-- un frontend React pour l'usage principal,
-- un dashboard legacy FastAPI/Jinja conservé pour l'administration légère.
+- validation humaine optionnelle avant synthèse (mode interactif),
+- persistance complète des sessions, sources, steps et mémoire vectorielle,
+- livraison par email avec groupes de destinataires réutilisables.
 
 ---
 
 ## Fonctionnalités principales
 
-- Orchestrateur multi-agents avec planification et synthèse structurée.
-- Recherche séparée par mode:
-  - `free_search` pour le chemin gratuit/self-hosted via `SearXNG`
-  - `web_search` pour les providers API activés
-  - `research_search` pour les cas académiques et code
-- Stockage PostgreSQL + `pgvector` pour sessions, sources, steps et mémoire sémantique.
-- Configuration runtime via l'application, stockée en base et chiffrée si `CONFIG_ENCRYPTION_KEY` est présent.
-- Profils de veille programmés avec groupes d'emails réutilisables.
-- Frontend React, API FastAPI, frontend Dockerisé et stack locale autonome.
+**Orchestration**
+- Pipeline multi-agents avec LangGraph : supervisor → planner → dispatcher → collector → validator → synthesizer → emailer
+- Planner enrichi par la mémoire vectorielle : évite de répéter les angles déjà couverts dans les sessions précédentes
+- Mode interactif : pause après la collecte, approbation ou rejet humain avant synthèse
+- Création de session avec ID stable avant le démarrage du flux SSE
+
+**Recherche**
+- `free_search` — chemin gratuit/self-hosted via SearXNG
+- `web_search` — providers API activés (Tavily, Exa, LangSearch…)
+- `research_search` — mode académique et code avec parallélisation propre
+- Déduplication inter-sessions : les articles déjà persistés sont déprioritisés, les nouvelles sources remontent
+
+**Profils et planification**
+- Watch Profiles : sujet, topics, profondeur, format, langue, groupes email associés
+- Scheduler persistant via APScheduler + PostgreSQL : `weekly`, `monthly`, `once`, `custom`
+- Exécution immédiate possible depuis l'interface
+
+**Livraison**
+- Transport Gmail configurable dans l'UI (OAuth)
+- Groupes d'emails réutilisables rattachés aux profils
+- Newsletter unifiée : utilise le même pipeline orchestrateur (plan → recherche → synthèse → envoi)
+
+**Interface**
+- SPA React avec streaming SSE en temps réel
+- Pages : Sessions, Watch Profiles, Email Groups, Newsletter, Sources, Settings
+- Streaming avec keepalive, affichage du plan d'exécution en direct, banner d'approbation humaine
+
+**Qualité**
+- 200 tests automatisés (pytest-asyncio strict mode)
+- CI Python (ruff + pytest) et CI Frontend (tsc + vite build) indépendants
+- Stack PostgreSQL uniquement (Redis retiré)
 
 ---
 
@@ -64,9 +84,9 @@ Le produit expose deux surfaces:
 ### Prérequis
 
 - Docker Compose
-- un fichier `.env` à la racine uniquement si vous voulez surcharger le bootstrap par défaut
+- Un fichier `.env` à la racine pour surcharger les valeurs par défaut (optionnel)
 
-Le bootstrap minimal fourni par le projet est dans `docker/env.docker`.
+Le bootstrap minimal est dans `docker/env.docker`.
 
 ### Lancer la stack
 
@@ -74,36 +94,32 @@ Le bootstrap minimal fourni par le projet est dans `docker/env.docker`.
 make up
 ```
 
-Accès principaux:
+Accès principaux :
 
-- Frontend React: `http://localhost:3000`
-- API FastAPI: `http://localhost:8000`
-- API docs: `http://localhost:8000/docs`
-- Dashboard legacy: `http://localhost:8000/ui`
-- Healthcheck: `http://localhost:8000/health`
+| URL | Service |
+|---|---|
+| `http://localhost:3000` | Frontend React |
+| `http://localhost:8000` | API FastAPI |
+| `http://localhost:8000/docs` | Documentation API interactive |
+| `http://localhost:8000/health` | Healthcheck |
 
 ### Services Docker
 
 | Service | Rôle | Démarrage |
 |---|---|---|
-| `postgres` | base PostgreSQL + `pgvector` | `make up` |
-| `redis` | cache / runtime | `make up` |
-| `searxng` | moteur de recherche gratuit/self-hosted | `make up` |
-| `api` | API FastAPI + dashboard legacy | `make up` |
-| `frontend` | SPA React servie par nginx | `make up` |
-| `once` | exécution ponctuelle | `make up-once` |
-| `scheduler` | profils programmés | `make up-scheduler` |
-| `ollama` | optionnel, local-only | `make up-ollama` |
-
-Par défaut, `ollama` n'est pas lancé pour garder une stack légère. Le provider peut rester sélectionnable dans l'application, mais le catalogue local n'existe que si `ollama` tourne réellement et contient des modèles installés.
+| `postgres` | PostgreSQL + pgvector | `make up` |
+| `searxng` | Moteur de recherche self-hosted | `make up` |
+| `api` | API FastAPI | `make up` |
+| `frontend` | SPA React (nginx) | `make up` |
+| `once` | Exécution ponctuelle | `make up-once` |
+| `scheduler` | Profils programmés | `make up-scheduler` |
+| `ollama` | LLM local (optionnel) | `make up-ollama` |
 
 ---
 
 ## Configuration
 
-### Ce qui reste dans `.env`
-
-Le `.env` doit rester un bootstrap d'infrastructure et de sécurité:
+### Bootstrap `.env`
 
 ```env
 POSTGRES_DB=techwatch
@@ -116,56 +132,29 @@ DATABASE_SYNC_URL=postgresql://techwatch:techwatch@postgres:5432/techwatch
 FRONTEND_URL=http://localhost:3000
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ADMIN_API_TOKEN=change-me
-CONFIG_ENCRYPTION_KEY=...
 
-# Optionnel pour un premier boot avant configuration runtime via l'UI
+# Chiffrement des secrets runtime
+# python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+CONFIG_ENCRYPTION_KEY=
+
+# Premier boot optionnel avant configuration via l'UI
 LLM_PROVIDER=ollama
 LLM_BASE_URL=http://host.docker.internal:11434/v1
 LLM_MODEL=
+LLM_API_KEY=
 ```
 
-### Ce qui est configuré dans l'application
+### Configuration runtime (via l'UI)
 
-Le runtime normal se configure ensuite dans `Settings` et est sauvegardé en base:
+Tout le reste se configure dans `Settings` et est persisté en base :
 
-- provider LLM, modèle principal et fallbacks,
-- provider d'embeddings et modèle d'embedding,
-- clés API search / lecture / providers spécialisés,
-- Gmail OAuth client/token,
-- paramètres newsletter par défaut,
-- groupes d'emails et rattachement aux profils,
-- options d'extraction / crawling.
+- Provider LLM, modèle principal et fallbacks
+- Provider d'embeddings
+- Clés API search (Tavily, Exa, ArXiv…)
+- Gmail OAuth (client + token)
+- Groupes d'emails et profils de veille
 
-Les secrets runtime doivent être **chiffrés**, pas hashés, car l'application doit pouvoir les relire pour fonctionner.
-
----
-
-## Modèle produit
-
-### Profils et planification
-
-La planification vit au niveau des `watch_profiles`, pas dans une configuration globale.
-
-Chaque profil porte:
-
-- son sujet,
-- ses topics,
-- sa profondeur et son format,
-- ses sources préférées,
-- sa fréquence (`weekly`, `once`, `monthly`, `custom`),
-- ses groupes d'emails associés.
-
-### Email delivery
-
-Le transport Gmail reste globalement configuré dans `Settings`, mais les destinataires opérationnels sont maintenant portés par des groupes réutilisables.
-
-Flux cible:
-
-1. configuration Gmail dans `Settings`,
-2. création de groupes dans `Email Groups`,
-3. rattachement de groupes à un profil,
-4. exécution d'un profil,
-5. résolution automatique des destinataires de ce profil au moment de l'envoi.
+Les secrets runtime sont **chiffrés** (Fernet), pas hashés.
 
 ---
 
@@ -173,98 +162,63 @@ Flux cible:
 
 ```mermaid
 flowchart TD
-    UI["Frontend React / Dashboard legacy"] --> API["FastAPI API"]
+    UI["Frontend React"] --> API["FastAPI"]
 
-    API --> CFG[("AppConfig runtime DB")]
+    API --> CFG[("Config runtime DB")]
     API --> P[("Watch Profiles")]
     API --> G[("Email Groups")]
-    API --> ORCH["Orchestrator V2"]
+    API --> ORCH["Orchestrator"]
 
-    ORCH --> PLAN["Planner"]
+    ORCH --> PLAN["Planner\n(+ mémoire vectorielle)"]
     ORCH --> DISP["Dispatcher"]
-
-    DISP --> FREE["free_search"]
-    DISP --> WEB["web_search"]
-    DISP --> RS["research_search"]
-    DISP --> TOOLS["Social / PDF / Readers / GitHub"]
-
+    ORCH --> APPR["Human Approval\n(mode interactif)"]
     ORCH --> SYN["Synthesizer"]
+
+    DISP --> FREE["free_search (SearXNG)"]
+    DISP --> WEB["web_search (APIs)"]
+    DISP --> RS["research_search"]
+    DISP --> TOOLS["GitHub / PDF / Social"]
+
     SYN --> DELIV["ReportDeliveryService"]
-    DELIV --> GMAIL["GmailDeliveryClient"]
+    DELIV --> GMAIL["Gmail"]
 
     ORCH --> SM["SessionManager"]
     SM --> DB[("PostgreSQL + pgvector")]
 
-    P --> G
-    FREE --> SX["SearXNG"]
-    WEB --> APIS["API search providers"]
-    RS --> ACAD["Academic + code providers"]
+    P --> SCHED["APScheduler\n(job store PostgreSQL)"]
+    SCHED --> ORCH
 ```
 
 ```text
-Frontend / API
-├── Settings                -> configuration runtime DB
-├── Email Groups            -> groupes de destinataires réutilisables
-├── Sessions / Profiles     -> création, planification, rattachement email
-└── Orchestrator V2
-    ├── planner
-    ├── dispatcher
-    │   ├── free_search
-    │   ├── web_search
-    │   ├── research_search
-    │   └── autres outils spécialisés
-    ├── synthesizer
-    ├── delivery
-    └── persistence
+app/
+├── agents/
+│   ├── orchestrator/      pipeline principal (LangGraph)
+│   ├── deep_research/     recherche approfondie
+│   └── newsletter/        agent newsletter (legacy)
+├── api/
+│   └── routers/           sessions, profiles, orchestrator, newsletter…
+├── config/                settings runtime + chiffrement
+├── core/                  modèles, brief, context
+├── db/                    models SQLAlchemy, repositories, migrations
+├── delivery/              transport Gmail
+├── rag/                   VectorStore pgvector
+├── scheduler/             APScheduler persistent
+├── services/              streaming SSE, session manager, article ranker
+└── tools/                 web, academic, social, memory, PDF…
 ```
 
 ---
 
-## Providers LLM et embeddings
+## Providers LLM
 
-### LLM
-
-| Provider | Découverte | Clé API |
+| Provider | Découverte modèles | Clé API |
 |---|---|---|
-| `ollama` | dynamique uniquement | non |
+| `ollama` | dynamique | non |
 | `openrouter` | catalogue curé | oui |
 | `zai` | catalogue curé | oui |
 | `openai` | catalogue curé | oui |
 
-`ollama` n'est jamais hardcodé côté catalogue. S'il n'y a aucun modèle local, le catalogue est vide.
-
-### Embeddings
-
-Les embeddings suivent le même principe:
-
-- modèles curés pour `openai` et `openrouter`,
-- support `z.ai` si configuré,
-- détection dynamique pour `ollama`.
-
----
-
-## Recherche
-
-### `free_search`
-
-Chemin gratuit et auto-hébergé via `SearXNG`.
-
-### `web_search`
-
-Agrège uniquement les providers API activés dans le runtime, par exemple:
-
-- Tavily
-- Exa
-- LangSearch
-- autres providers API disponibles
-
-### `research_search`
-
-Mode spécialisé pour sujets académiques et code:
-
-- `SearXNG` en première couche de découverte,
-- providers académiques ou code en renfort selon le focus,
-- parallélisation possible sans mélanger les chemins gratuits et payants de façon opaque.
+Les embeddings suivent le même principe (pgvector avec modèles détectés ou configurés).
 
 ---
 
@@ -274,66 +228,66 @@ Mode spécialisé pour sujets académiques et code:
 
 | Méthode | Endpoint | Description |
 |---|---|---|
-| `POST` | `/orchestrator/run` | lance le pipeline principal |
-| `GET` | `/orchestrator/stream` | flux SSE pour exécution live |
-| `POST` | `/orchestrator/task` | exécution avec contrôle fin |
-| `GET` | `/orchestrator/status` | état courant |
+| `POST` | `/orchestrator/sessions` | Crée une session, retourne l'ID stable |
+| `GET` | `/orchestrator/stream` | Flux SSE temps réel |
+| `POST` | `/orchestrator/sessions/{id}/approve` | Approuve et reprend après pause |
+| `POST` | `/orchestrator/sessions/{id}/reject` | Rejette et marque comme échoué |
+| `POST` | `/orchestrator/run` | Exécution synchrone complète |
+| `GET` | `/orchestrator/status` | État courant |
 
 ### Sessions
 
 | Méthode | Endpoint | Description |
 |---|---|---|
-| `GET` | `/sessions` | liste des sessions |
-| `GET` | `/sessions/{id}` | détail, steps, rapport |
-| `DELETE` | `/sessions/{id}` | suppression |
+| `GET` | `/sessions` | Liste des sessions |
+| `GET` | `/sessions/{id}` | Détail, steps, rapport |
+| `DELETE` | `/sessions/{id}` | Suppression |
 
-### Watch profiles
-
-| Méthode | Endpoint | Description |
-|---|---|---|
-| `GET` | `/watch-profiles/` | liste des profils |
-| `POST` | `/watch-profiles/` | création |
-| `PATCH` | `/watch-profiles/{id}` | mise à jour |
-| `POST` | `/watch-profiles/{id}/run` | exécution immédiate |
-| `DELETE` | `/watch-profiles/{id}` | suppression |
-
-### Email groups
+### Watch Profiles
 
 | Méthode | Endpoint | Description |
 |---|---|---|
-| `GET` | `/email-groups/` | liste des groupes |
-| `POST` | `/email-groups/` | création |
-| `GET` | `/email-groups/{id}` | détail |
-| `PATCH` | `/email-groups/{id}` | mise à jour |
-| `DELETE` | `/email-groups/{id}` | suppression |
+| `GET` | `/watch-profiles/` | Liste des profils |
+| `POST` | `/watch-profiles/` | Création |
+| `PATCH` | `/watch-profiles/{id}` | Mise à jour |
+| `POST` | `/watch-profiles/{id}/run` | Exécution immédiate |
+| `DELETE` | `/watch-profiles/{id}` | Suppression |
+
+### Email Groups
+
+| Méthode | Endpoint | Description |
+|---|---|---|
+| `GET` | `/email-groups/` | Liste |
+| `POST` | `/email-groups/` | Création |
+| `PATCH` | `/email-groups/{id}` | Mise à jour |
+| `DELETE` | `/email-groups/{id}` | Suppression |
 
 ### Providers et outils
 
 | Méthode | Endpoint | Description |
 |---|---|---|
-| `GET` | `/llm/providers` | catalogue providers + modèles |
-| `POST` | `/llm/ollama/pull` | pull d'un modèle Ollama |
-| `GET` | `/tools` | inventaire des tools |
-| `POST` | `/tools/execute` | exécution d'un tool |
-| `PATCH` | `/config` | mise à jour runtime |
+| `GET` | `/llm/providers` | Catalogue providers + modèles |
+| `POST` | `/llm/ollama/pull` | Pull d'un modèle Ollama |
+| `GET` | `/tools` | Inventaire des tools |
+| `POST` | `/tools/execute` | Exécution d'un tool |
+| `PATCH` | `/config` | Mise à jour runtime |
 
 ---
 
 ## Makefile
 
 ```bash
-make help
-make build
-make up
-make up-ollama
-make up-once
-make up-scheduler
-make down
-make ps
-make logs
-make api-logs
-make soft-clean
-make hard-clean
+make help          # liste des commandes disponibles
+make build         # build des images Docker
+make up            # stack complète (postgres, searxng, api, frontend)
+make up-ollama     # avec Ollama local
+make up-once       # exécution ponctuelle
+make up-scheduler  # profils programmés
+make down          # arrêt
+make logs          # logs de tous les services
+make api-logs      # logs de l'API uniquement
+make soft-clean    # arrêt + suppression des conteneurs
+make hard-clean    # suppression complète volumes + images
 ```
 
 ---
@@ -341,88 +295,69 @@ make hard-clean
 ## Développement local sans Docker
 
 ```bash
+# Installation avec uv (recommandé)
+uv venv .venv --python 3.11
+uv pip install --python .venv/bin/python -e ".[dev]"
+source .venv/bin/activate
+
+# Ou avec pip
 pip install -e ".[dev]"
+
 alembic upgrade head
 python -m app.main --mode api
 ```
 
-Autres modes:
+Frontend :
+
+```bash
+cd frontend
+npm install
+npm run dev     # dev server sur http://localhost:5173
+npm run build   # build de production
+```
+
+Autres modes API :
 
 ```bash
 python -m app.main --mode once --no-email
-python -m app.main --mode once --v1 --no-email
 python -m app.main --mode schedule
 ```
 
 ---
 
-## Structure du dépôt
+## Tests
 
-```text
-app/
-├── agents/
-│   ├── orchestrator/
-│   ├── deep_research/
-│   └── newsletter/
-├── api/
-│   └── routers/
-├── dashboard/
-├── templates/
-├── config/
-├── core/
-├── db/
-├── delivery/
-├── rag/
-├── scheduler/
-├── services/
-├── tools/
-└── templates/
-alembic/
-docker/
-frontend/
-tests/
+```bash
+pytest tests/ -v
 ```
+
+La suite de tests requiert PostgreSQL (pgvector). En CI, le service est fourni automatiquement. En local, pointez `DATABASE_URL` et `DATABASE_SYNC_URL` vers votre instance.
 
 ---
 
 ## Notes de déploiement
 
-- `alembic upgrade head` reste la seule voie normale d'évolution du schéma.
-- le frontend appelle l'API via `/api` derrière nginx.
-- en production, définissez au minimum `ADMIN_API_TOKEN`, `CONFIG_ENCRYPTION_KEY` et `CORS_ORIGINS` explicitement.
-- `SearXNG` fait partie de la stack du projet.
-- `ollama` reste optionnel et volontairement séparé du chemin par défaut.
+- `alembic upgrade head` est la seule voie d'évolution du schéma.
+- Le frontend appelle l'API via `/api` derrière nginx en production.
+- En production, définissez explicitement `ADMIN_API_TOKEN`, `CONFIG_ENCRYPTION_KEY` et `CORS_ORIGINS`.
+- SearXNG fait partie de la stack Docker du projet.
+- Ollama reste optionnel et volontairement séparé du chemin par défaut.
 
 ---
 
-## État actuel
+## Documentation
 
-Le socle produit est maintenant aligné sur un modèle plus propre:
-
-- configuration runtime via UI + DB,
-- profils programmés comme centre de gravité du produit,
-- livraison email par groupes réutilisables,
-- recherche séparée par modes,
-- stack Docker projet autonome pour `postgres`, `redis`, `searxng`, `api`, `frontend`.
-
-
----
-
-## Documentation utile
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) : workflow de contribution
-- [SECURITY.md](SECURITY.md) : remontée responsable des vulnérabilités
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) : règles de conduite du projet
-- [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) : état actuel du projet
-- [frontend/README.md](frontend/README.md) : notes spécifiques au frontend
+- [CONTRIBUTING.md](CONTRIBUTING.md) — workflow de contribution
+- [SECURITY.md](SECURITY.md) — remontée responsable des vulnérabilités
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — règles de conduite
 
 ---
 
 ## Contribution
 
-Les contributions sont bienvenues, tant qu'elles respectent le modèle produit actuel et gardent frontend, API, persistance et documentation alignés.
+Les contributions sont bienvenues. Avant d'ouvrir une PR, lisez [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Avant d'ouvrir une PR, lisez [CONTRIBUTING.md](CONTRIBUTING.md).
+Les PRs vers `main` requièrent que les checks CI passent (Python lint + tests, Frontend build).
 
 ---
 
